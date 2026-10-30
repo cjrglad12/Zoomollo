@@ -45,6 +45,34 @@ SOCIAL_HOSTS = {
     "tiktok.com": "tiktok",
 }
 
+# Links / embeds that reveal which applicant-tracking system a company uses.
+ATS_RE = [
+    ("greenhouse", re.compile(r"(?:job-)?boards(?:-api)?\.greenhouse\.io/(?:embed/job_board(?:/js)?\?for=|v1/boards/)?([A-Za-z0-9_-]+)", re.I)),
+    ("lever", re.compile(r"jobs\.lever\.co/([A-Za-z0-9_.-]+)", re.I)),
+    ("ashby", re.compile(r"jobs\.ashbyhq\.com/([A-Za-z0-9_.%-]+)", re.I)),
+    ("workable", re.compile(r"apply\.workable\.com/(?:api/v\d/widget/accounts/)?([A-Za-z0-9_-]+)", re.I)),
+]
+_ATS_NOT_SLUGS = {"embed", "api", "v1", "j", "jobs", "js", "static", "assets"}
+
+
+def find_ats(text: str) -> set[tuple[str, str]]:
+    out = set()
+    for board, rx in ATS_RE:
+        for m in rx.finditer(text or ""):
+            slug = m.group(1).strip("/").lower()
+            if slug and slug not in _ATS_NOT_SLUGS:
+                out.add((board, slug))
+    return out
+
+
+# Words that make a short line look like a job title.
+_TITLE_HINT = re.compile(
+    r"\b(ceo|cfo|coo|cto|cmo|cio|chief|founder|owner|president|partner|principal|director|head|vp|"
+    r"vice president|manager|lead|supervisor|superintendent|engineer|officer|recruiter|coordinator|"
+    r"specialist|analyst|accountant|attorney|counsel|architect|estimator|controller|associate|"
+    r"consultant|administrator|executive|advisor|sales|marketing|operations|hr|talent)\b", re.I)
+
+
 _NAME_RE = re.compile(r"^[A-Z][a-zA-Z'’-]+(?:\s+[A-Z]\.?)?(?:\s+[A-Z][a-zA-Z'’-]+){1,2}$")
 
 
@@ -65,6 +93,7 @@ class PageResult:
     socials: set[str] = field(default_factory=set)
     links: list[str] = field(default_factory=list)
     title: str | None = None
+    ats: set[tuple[str, str]] = field(default_factory=set)
 
 
 def deobfuscate(text: str) -> str:
@@ -161,6 +190,28 @@ def _jsonld_people(soup: BeautifulSoup) -> list[Person]:
     return people
 
 
+def _team_members(soup: BeautifulSoup) -> list[Person]:
+    """Team / leadership cards: a short name line followed closely by a title line."""
+    people, seen = [], set()
+    for el in soup.find_all(["h2", "h3", "h4", "h5", "h6", "strong", "b", "p", "span", "div", "a"]):
+        if el.find(["div", "p", "h2", "h3", "h4", "ul"]):
+            continue  # only leaf-ish elements
+        name = el.get_text(" ", strip=True)
+        if len(name) > 40 or not looks_like_name(name) or _TITLE_HINT.search(name):
+            continue
+        # Title is usually the next element with text, or text right after a separator.
+        title = None
+        nxt = el.find_next(string=lambda t: t and t.strip() and t.strip() != name)
+        if nxt:
+            cand = nxt.strip().strip("|,–—-").strip()
+            if 2 < len(cand) < 80 and _TITLE_HINT.search(cand) and "@" not in cand:
+                title = cand
+        if title and name.lower() not in seen:
+            seen.add(name.lower())
+            people.append(Person(name=name, title=title))
+    return people
+
+
 def extract_page(html: str, url: str, region: str = "US") -> PageResult:
     soup = BeautifulSoup(html, "html.parser")
     res = PageResult(url=url)
@@ -168,6 +219,7 @@ def extract_page(html: str, url: str, region: str = "US") -> PageResult:
         res.title = soup.title.string.strip()[:200]
 
     res.people.extend(_jsonld_people(soup))
+    res.ats = find_ats(html)
 
     for a in soup.find_all("a", href=True):
         href = a["href"].strip()
@@ -192,6 +244,10 @@ def extract_page(html: str, url: str, region: str = "US") -> PageResult:
 
     for tag in soup(["script", "style", "noscript", "svg"]):
         tag.decompose()
+    known = {p.name.lower() for p in res.people if p.name}
+    for p in _team_members(soup):
+        if p.name.lower() not in known:
+            res.people.append(p)
     text = soup.get_text(" ", strip=True)
     res.emails |= find_emails(text)
     res.phones |= find_phones(text, region)

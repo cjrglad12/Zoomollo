@@ -54,6 +54,25 @@ CREATE TABLE IF NOT EXISTS suppression (
     reason TEXT,
     added_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS people (
+    id INTEGER PRIMARY KEY,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    name_key TEXT NOT NULL,
+    title TEXT,
+    department TEXT,
+    seniority TEXT,
+    email TEXT,
+    email_status TEXT,                  -- found | guessed
+    phone TEXT,
+    linkedin_url TEXT,
+    source TEXT,                        -- website | search
+    source_url TEXT,
+    hiring_for TEXT,                    -- open roles this person likely owns
+    first_seen TEXT NOT NULL,
+    UNIQUE (company_id, name_key)
+);
+CREATE INDEX IF NOT EXISTS people_company ON people(company_id);
 CREATE INDEX IF NOT EXISTS contacts_company ON contacts(company_id);
 CREATE INDEX IF NOT EXISTS jobs_company ON jobs(company_id);
 """
@@ -67,6 +86,15 @@ def default_path() -> str:
     return os.environ.get("ZOOMOLLO_DB", "zoomollo.db")
 
 
+# Columns added after the first release; created on open if missing.
+MIGRATIONS = {
+    "companies": {"city": "TEXT", "industry": "TEXT", "address": "TEXT", "phone": "TEXT",
+                  "source": "TEXT"},
+    "jobs": {"department": "TEXT"},
+    "people": {"pushed_to_loxo": "INTEGER NOT NULL DEFAULT 0"},
+}
+
+
 class DB:
     def __init__(self, path: str | None = None):
         self.path = path or default_path()
@@ -75,6 +103,12 @@ class DB:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.executescript(SCHEMA)
+        for table, cols in MIGRATIONS.items():
+            have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+            for col, typ in cols.items():
+                if col not in have:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+        self.conn.commit()
 
     # --- companies ---------------------------------------------------------
     def company(self, key: str, domain: str | None = None, name: str | None = None) -> int:
@@ -108,8 +142,12 @@ class DB:
             (value, reason, now()),
         )
         if value.startswith("@"):
+            self.conn.execute("UPDATE people SET email = NULL, email_status = NULL WHERE email LIKE ?",
+                              ("%" + value,))
             cur = self.conn.execute("DELETE FROM contacts WHERE type='email' AND value LIKE ?", ("%" + value,))
         else:
+            self.conn.execute("UPDATE people SET email = NULL, email_status = NULL WHERE email = ?", (value,))
+            self.conn.execute("UPDATE people SET phone = NULL WHERE phone = ?", (value,))
             cur = self.conn.execute("DELETE FROM contacts WHERE value = ?", (value,))
         self.conn.commit()
         return cur.rowcount
@@ -136,16 +174,78 @@ class DB:
         )
         return True
 
+    def add_person(self, company_id: int, name: str, title: str | None = None, **fields) -> int | None:
+        """Insert or enrich a person. Existing values win except blanks get filled."""
+        from .orgmap import department, seniority
+        name = " ".join(name.split())
+        key = name.lower()
+        email = fields.get("email")
+        if email and self.is_suppressed(email):
+            return None
+        row = self.conn.execute("SELECT * FROM people WHERE company_id = ? AND name_key = ?",
+                                (company_id, key)).fetchone()
+        if row is None:
+            cur = self.conn.execute(
+                "INSERT INTO people (company_id, name, name_key, title, department, seniority, email, "
+                "email_status, phone, linkedin_url, source, source_url, first_seen) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (company_id, name, key, title, department(title), seniority(title), email,
+                 fields.get("email_status") or ("found" if email else None), fields.get("phone"),
+                 fields.get("linkedin_url"), fields.get("source"), fields.get("source_url"), now()))
+            return cur.lastrowid
+        upd = {}
+        if title and not row["title"]:
+            upd.update(title=title, department=department(title), seniority=seniority(title))
+        for f in ("phone", "linkedin_url", "source_url"):
+            if fields.get(f) and not row[f]:
+                upd[f] = fields[f]
+        # A found email replaces a guess.
+        if email and (not row["email"] or (row["email_status"] == "guessed"
+                                           and fields.get("email_status", "found") == "found")):
+            upd.update(email=email, email_status=fields.get("email_status") or "found")
+        if upd:
+            cols = ", ".join(f"{k} = ?" for k in upd)
+            self.conn.execute(f"UPDATE people SET {cols} WHERE id = ?", (*upd.values(), row["id"]))
+        return row["id"]
+
+    def people(self, company_id: int | None = None, q: str = "", department: str | None = None,
+               hiring_only: bool = False, limit: int = 1000) -> list[sqlite3.Row]:
+        sql = ("SELECT p.*, co.name AS company_name, co.key AS company_key, co.city AS company_city "
+               "FROM people p JOIN companies co ON co.id = p.company_id WHERE 1=1")
+        args: list = []
+        if company_id is not None:
+            sql += " AND p.company_id = ?"
+            args.append(company_id)
+        if q:
+            like = f"%{q.lower()}%"
+            sql += (" AND (p.name_key LIKE ? OR lower(COALESCE(p.title,'')) LIKE ? OR lower(co.key) LIKE ? "
+                    "OR lower(COALESCE(co.name,'')) LIKE ? OR lower(COALESCE(co.industry,'')) LIKE ? "
+                    "OR lower(COALESCE(co.city,'')) LIKE ?)")
+            args += [like] * 6
+        if department:
+            sql += " AND p.department = ?"
+            args.append(department)
+        if hiring_only:
+            sql += " AND p.hiring_for IS NOT NULL"
+        sql += (" ORDER BY co.name, CASE p.seniority WHEN 'c_level' THEN 0 WHEN 'vp' THEN 1 "
+                "WHEN 'director' THEN 2 WHEN 'manager' THEN 3 ELSE 4 END, p.name LIMIT ?")
+        args.append(limit)
+        return self.conn.execute(sql, args).fetchall()
+
+    def company_row(self, company_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM companies WHERE id = ?", (company_id,)).fetchone()
+
     def add_social(self, company_id: int, kind: str, url: str) -> None:
         self.conn.execute("INSERT OR IGNORE INTO socials (company_id, kind, url) VALUES (?, ?, ?)",
                           (company_id, kind, url))
 
     def add_job(self, company_id: int, board: str, external_id: str, title: str,
                 location: str | None, url: str | None, posted_at: str | None) -> None:
+        from .orgmap import department
         self.conn.execute(
-            "INSERT OR IGNORE INTO jobs (company_id, board, external_id, title, location, url, posted_at, first_seen) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (company_id, board, external_id, title, location, url, posted_at, now()),
+            "INSERT OR IGNORE INTO jobs (company_id, board, external_id, title, location, url, posted_at, "
+            "first_seen, department) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (company_id, board, external_id, title, location, url, posted_at, now(), department(title)),
         )
 
     def named_emails(self, company_id: int) -> list[tuple[str, str]]:
@@ -175,13 +275,18 @@ class DB:
         args.append(limit)
         return self.conn.execute(sql, args).fetchall()
 
-    def jobs(self, q: str = "", limit: int = 500) -> list[sqlite3.Row]:
+    def jobs(self, q: str = "", limit: int = 500, company_id: int | None = None) -> list[sqlite3.Row]:
         sql = ("SELECT j.*, co.key AS company_key, co.name AS company_name FROM jobs j "
                "LEFT JOIN companies co ON co.id = j.company_id")
         args: list = []
+        sql += " WHERE 1=1"
+        if company_id is not None:
+            sql += " AND j.company_id = ?"
+            args.append(company_id)
         if q:
-            sql += " WHERE lower(j.title) LIKE ? OR lower(co.key) LIKE ? OR lower(COALESCE(j.location,'')) LIKE ?"
-            args += [f"%{q.lower()}%"] * 3
+            sql += (" AND (lower(j.title) LIKE ? OR lower(co.key) LIKE ? OR lower(COALESCE(co.name,'')) LIKE ? "
+                    "OR lower(COALESCE(j.location,'')) LIKE ?)")
+            args += [f"%{q.lower()}%"] * 4
         sql += " ORDER BY j.first_seen DESC LIMIT ?"
         args.append(limit)
         return self.conn.execute(sql, args).fetchall()
@@ -191,7 +296,8 @@ class DB:
             "SELECT co.*, "
             "(SELECT COUNT(*) FROM contacts c WHERE c.company_id = co.id AND c.type='email') AS emails, "
             "(SELECT COUNT(*) FROM contacts c WHERE c.company_id = co.id AND c.type='phone') AS phones, "
-            "(SELECT COUNT(*) FROM jobs j WHERE j.company_id = co.id) AS open_jobs "
+            "(SELECT COUNT(*) FROM jobs j WHERE j.company_id = co.id) AS open_jobs, "
+            "(SELECT COUNT(*) FROM people p WHERE p.company_id = co.id) AS people "
             "FROM companies co ORDER BY co.created_at DESC").fetchall()
 
     def stats(self) -> dict:
@@ -201,6 +307,7 @@ class DB:
             "emails": one("SELECT COUNT(*) FROM contacts WHERE type='email' AND kind != 'guessed'"),
             "guessed": one("SELECT COUNT(*) FROM contacts WHERE kind = 'guessed'"),
             "phones": one("SELECT COUNT(*) FROM contacts WHERE type='phone'"),
+            "people": one("SELECT COUNT(*) FROM people"),
             "jobs": one("SELECT COUNT(*) FROM jobs"),
         }
 

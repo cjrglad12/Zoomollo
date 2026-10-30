@@ -50,24 +50,24 @@ def person_payload(name: str, email: str | None, phone: str | None, title: str |
 
 
 def push_people(db: DB, dry_run: bool = True, include_guessed: bool = False,
-                limit: int = 100) -> list[dict]:
-    """Push named, not-yet-pushed contacts. Returns the payloads sent (or that would be)."""
-    kinds = ("person", "guessed") if include_guessed else ("person",)
-    rows = db.conn.execute(
-        f"SELECT c.*, co.name AS company_name, co.key AS company_key FROM contacts c "
-        f"LEFT JOIN companies co ON co.id = c.company_id "
-        f"WHERE c.name IS NOT NULL AND c.pushed_to_loxo = 0 AND c.type = 'email' "
-        f"AND c.kind IN ({','.join('?' * len(kinds))}) LIMIT ?", (*kinds, limit)).fetchall()
+                hiring_only: bool = False, limit: int = 100) -> list[dict]:
+    """Push mapped people (with an email) not pushed yet. Returns the payloads."""
+    sql = ("SELECT p.*, co.name AS company_name, co.key AS company_key FROM people p "
+           "JOIN companies co ON co.id = p.company_id WHERE p.email IS NOT NULL "
+           "AND p.pushed_to_loxo = 0")
+    if not include_guessed:
+        sql += " AND p.email_status = 'found'"
+    if hiring_only:
+        sql += " AND p.hiring_for IS NOT NULL"
+    rows = db.conn.execute(sql + " LIMIT ?", (limit,)).fetchall()
     client = None if dry_run else LoxoClient()
     sent = []
     for r in rows:
-        phone = db.conn.execute(
-            "SELECT value FROM contacts WHERE type='phone' AND name = ? AND company_id = ? LIMIT 1",
-            (r["name"], r["company_id"])).fetchone()
-        payload = person_payload(r["name"], r["value"], phone[0] if phone else None, r["title"],
+        payload = person_payload(r["name"], r["email"], r["phone"], r["title"],
                                  r["company_name"] or r["company_key"])
         if client:
             client.create_person(payload)
-            db.mark_pushed(r["id"])
+            db.conn.execute("UPDATE people SET pushed_to_loxo = 1 WHERE id = ?", (r["id"],))
+            db.commit()
         sent.append(payload)
     return sent

@@ -22,6 +22,21 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("-v", "--verbose", action="store_true")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
+    pr = sub.add_parser("prospect", help='Find companies by industry + city, then map their people. '
+                        'e.g. zoomollo prospect "commercial HVAC" "Austin, TX"')
+    pr.add_argument("what", help="What the companies do")
+    pr.add_argument("where", help="US city, e.g. 'Austin, TX'")
+    pr.add_argument("--limit", type=int, default=25, help="Max companies (default 25)")
+    pr.add_argument("--pages", type=int, default=15, help="Pages to crawl per company site")
+    pr.add_argument("--no-people", action="store_true", help="Skip search-engine people lookups")
+    pr.add_argument("--no-osm", action="store_true", help="Skip OpenStreetMap")
+
+    pe = sub.add_parser("people", help="List mapped people (org charts)")
+    pe.add_argument("query", nargs="?", default="")
+    pe.add_argument("--department")
+    pe.add_argument("--hiring", action="store_true", help="Only likely hiring managers")
+    pe.add_argument("--limit", type=int, default=200)
+
     c = sub.add_parser("crawl", help="Crawl company websites for emails and phones")
     c.add_argument("domains", nargs="+", help="Domains, or @file.txt with one per line")
     c.add_argument("--max-pages", type=int, default=40)
@@ -55,6 +70,8 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("query", nargs="?", default="")
     e.add_argument("--type", choices=["email", "phone"])
     e.add_argument("--kind", choices=["person", "role", "company", "guessed"])
+    e.add_argument("--people", action="store_true", help="Export people (org map) instead of raw contacts")
+    e.add_argument("--hiring", action="store_true", help="With --people: hiring managers only")
 
     x = sub.add_parser("suppress", help="Opt someone out: deletes and blocks an email, phone or @domain")
     x.add_argument("value")
@@ -63,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
     lp = sub.add_parser("loxo-push", help="Push named contacts to Loxo (dry run unless --send)")
     lp.add_argument("--send", action="store_true")
     lp.add_argument("--include-guessed", action="store_true")
+    lp.add_argument("--hiring", action="store_true", help="Only likely hiring managers")
     lp.add_argument("--limit", type=int, default=100)
 
     sv = sub.add_parser("serve", help="Run the web UI")
@@ -73,7 +91,21 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO if a.verbose else logging.WARNING, format="%(message)s")
     db = DB(a.db)
 
-    if a.cmd == "crawl":
+    if a.cmd == "prospect":
+        from .search import get_provider
+        provider = get_provider()
+        if not provider:
+            print("Note: no search API configured (BRAVE_API_KEY / SERPAPI_KEY / SEARXNG_URL), so only "
+                  "OpenStreetMap and company websites are used. See README.", file=sys.stderr)
+        res = pipeline.prospect(db, a.what, a.where, a.limit, a.pages, provider,
+                                find_people=not a.no_people, use_osm=not a.no_osm, progress=print)
+        print(json.dumps(res, indent=2))
+
+    elif a.cmd == "people":
+        _print_rows(db.people(q=a.query, department=a.department, hiring_only=a.hiring, limit=a.limit),
+                    ["company_name", "name", "title", "department", "email", "email_status", "hiring_for"])
+
+    elif a.cmd == "crawl":
         domains = []
         for d_ in a.domains:
             if d_.startswith("@"):
@@ -117,7 +149,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(db.stats(), indent=2))
 
     elif a.cmd == "export":
-        data = pipeline.export_csv(db, a.query, a.type, a.kind)
+        data = (pipeline.export_people_csv(db, a.query, hiring_only=a.hiring) if a.people
+                else pipeline.export_csv(db, a.query, a.type, a.kind))
         if a.out == "-":
             sys.stdout.write(data)
         else:
@@ -131,7 +164,8 @@ def main(argv: list[str] | None = None) -> int:
 
     elif a.cmd == "loxo-push":
         from .loxo import push_people
-        sent = push_people(db, dry_run=not a.send, include_guessed=a.include_guessed, limit=a.limit)
+        sent = push_people(db, dry_run=not a.send, include_guessed=a.include_guessed,
+                           hiring_only=a.hiring, limit=a.limit)
         for p in sent:
             print(json.dumps(p))
         print(f"{'Pushed' if a.send else 'Would push'} {len(sent)} people.")
