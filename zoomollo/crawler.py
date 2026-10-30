@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import heapq
 import logging
+import re
 import time
 from typing import Iterator
 from urllib.parse import urlparse
@@ -104,6 +105,30 @@ class Crawler:
             return None
         return r.url, r.text
 
+    def sitemap_urls(self, base: str, limit: int = 2000) -> list[str]:
+        rp = self._robots_for(base)
+        maps = list((rp.site_maps() if rp else None) or []) or [base + "/sitemap.xml"]
+        urls: list[str] = []
+        fetched = 0
+        while maps and fetched < 6 and len(urls) < limit:
+            sm = maps.pop(0)
+            fetched += 1
+            if not self.allowed(sm):
+                continue
+            try:
+                r = self.session.get(sm, timeout=self.timeout)
+            except requests.RequestException:
+                continue
+            if not r.ok or "<loc>" not in r.text:
+                continue
+            locs = re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", r.text)
+            if "<sitemapindex" in r.text:
+                # Child sitemaps: people / team / job ones first.
+                maps += sorted(locs, key=lambda u: -score(u))
+            else:
+                urls += locs
+        return urls[:limit]
+
     def crawl(self, domain_or_url: str) -> Iterator[PageResult]:
         domain = normalize_domain(domain_or_url)
         base = f"https://{domain}"
@@ -125,6 +150,10 @@ class Crawler:
 
         for path in SEED_PATHS:
             push(base + path)
+        # Sitemaps list pages the menus don't link to (bios, individual job posts).
+        for url in self.sitemap_urls(base):
+            if score(url) > 0:
+                push(url)
 
         fetched = 0
         while queue and fetched < self.max_pages:

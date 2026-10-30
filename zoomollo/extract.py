@@ -73,6 +73,20 @@ _TITLE_HINT = re.compile(
     r"consultant|administrator|executive|advisor|sales|marketing|operations|hr|talent)\b", re.I)
 
 
+# Words that make link text look like a job opening (on a careers page).
+_JOB_HINT = re.compile(
+    r"\b(manager|director|engineer|developer|technician|installer|driver|assistant|associate|"
+    r"specialist|coordinator|representative|rep|analyst|accountant|nurse|electrician|plumber|"
+    r"apprentice|helper|mechanic|operator|estimator|designer|receptionist|dispatcher|intern|"
+    r"supervisor|superintendent|lead|executive|consultant|administrator|clerk|officer|recruiter|"
+    r"foreman|planner|scientist|architect|attorney|paralegal|bookkeeper|controller|advisor|agent|"
+    r"sales|marketing|cashier|cook|chef|server|teacher|therapist|hygienist|counselor|inspector|"
+    r"welder|carpenter|laborer|tech|hvac|warehouse|crew|project)\b", re.I)
+_JOB_LINK = re.compile(r"(job|career|position|opening|posting|vacanc|role|apply|opportunit)", re.I)
+_NOT_JOB = re.compile(r"^(view|see|browse|search|apply|all|open|current|our|join|careers?|jobs?|"
+                      r"job openings|learn more|read more|benefits|culture|life at)\b", re.I)
+
+
 _NAME_RE = re.compile(r"^[A-Z][a-zA-Z'’-]+(?:\s+[A-Z]\.?)?(?:\s+[A-Z][a-zA-Z'’-]+){1,2}$")
 
 
@@ -94,6 +108,7 @@ class PageResult:
     links: list[str] = field(default_factory=list)
     title: str | None = None
     ats: set[tuple[str, str]] = field(default_factory=set)
+    jobs: list[dict] = field(default_factory=list)
 
 
 def deobfuscate(text: str) -> str:
@@ -190,6 +205,70 @@ def _jsonld_people(soup: BeautifulSoup) -> list[Person]:
     return people
 
 
+def _jsonld_jobs(soup: BeautifulSoup, page_url: str) -> list[dict]:
+    """schema.org JobPosting blocks (the markup Google for Jobs reads)."""
+    jobs: list[dict] = []
+
+    def loc(j):
+        locs = j.get("jobLocation")
+        locs = locs if isinstance(locs, list) else [locs]
+        out = []
+        for l in locs:
+            a = (l or {}).get("address") if isinstance(l, dict) else None
+            if isinstance(a, dict):
+                out.append(", ".join(x for x in [a.get("addressLocality"), a.get("addressRegion")] if x))
+            elif isinstance(a, str):
+                out.append(a)
+        if j.get("jobLocationType") == "TELECOMMUTE":
+            out.append("Remote")
+        return "; ".join(x for x in out if x) or None
+
+    def walk(node):
+        if isinstance(node, list):
+            for n in node:
+                walk(n)
+        elif isinstance(node, dict):
+            t = node.get("@type")
+            if t == "JobPosting" or (isinstance(t, list) and "JobPosting" in t):
+                title = node.get("title") or node.get("name")
+                if isinstance(title, str) and title.strip():
+                    url = node.get("url") if isinstance(node.get("url"), str) else page_url
+                    ident = node.get("identifier")
+                    ident = ident.get("value") if isinstance(ident, dict) else ident
+                    jobs.append({"title": title.strip()[:200], "url": url, "external_id": str(ident or url),
+                                 "location": loc(node), "posted_at": node.get("datePosted"),
+                                 "description": node.get("description") or ""})
+            for v in node.values():
+                if isinstance(v, (list, dict)):
+                    walk(v)
+
+    for tag in soup.find_all("script", type="application/ld+json"):
+        try:
+            walk(json.loads(tag.string or ""))
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return jobs
+
+
+def _job_links(soup: BeautifulSoup, page_url: str) -> list[dict]:
+    """On a careers page, links whose text reads like a role ("HVAC Service Technician")."""
+    if not _JOB_LINK.search(urlparse(page_url).path):
+        return []
+    jobs, seen = [], set()
+    for a in soup.find_all("a", href=True):
+        text = a.get_text(" ", strip=True)
+        href = urljoin(page_url, a["href"]).split("#")[0]
+        if not (4 <= len(text) <= 80) or _NOT_JOB.match(text) or "@" in text:
+            continue
+        if not _JOB_HINT.search(text) or not _JOB_LINK.search(href) or href.rstrip("/") == page_url.rstrip("/"):
+            continue
+        if href not in seen:
+            seen.add(href)
+            jobs.append({"title": text, "url": href, "external_id": href, "location": None,
+                         "posted_at": None, "description": ""})
+    return jobs
+
+
 def _team_members(soup: BeautifulSoup) -> list[Person]:
     """Team / leadership cards: a short name line followed closely by a title line."""
     people, seen = [], set()
@@ -220,6 +299,9 @@ def extract_page(html: str, url: str, region: str = "US") -> PageResult:
 
     res.people.extend(_jsonld_people(soup))
     res.ats = find_ats(html)
+    res.jobs = _jsonld_jobs(soup, url)
+    known_jobs = {j["url"] for j in res.jobs}
+    res.jobs += [j for j in _job_links(soup, url) if j["url"] not in known_jobs]
 
     for a in soup.find_all("a", href=True):
         href = a["href"].strip()

@@ -29,6 +29,12 @@ Or from the command line:
 zoomollo prospect "commercial HVAC" "Austin, TX" --limit 25
 zoomollo people --hiring                    # likely hiring managers
 zoomollo export --people --hiring -o hiring-managers.csv
+zoomollo hiring "technician"                # open roles with their matched contacts
+zoomollo export --jobs -o roles-contacts.csv
+zoomollo email-bad bob.smith@acme.com       # wrong/bounced -> next guess (up to 10 tries)
+zoomollo email-good bob@acme.com            # correct -> locks in the company's email format
+zoomollo bounces bounces.txt                # paste/export of bounce notices or a list of addresses
+zoomollo verify --hiring                    # auto-check guesses (needs NEVERBOUNCE/ZEROBOUNCE key)
 zoomollo crawl acme.com globex.io          # crawl sites (or: zoomollo crawl @domains.txt)
 zoomollo jobs greenhouse:stripe lever:plaid ashby:notion workable:hotjar
 zoomollo detect airbnb                      # which job board does a company use?
@@ -46,8 +52,30 @@ The database is `./zoomollo.db` unless you pass `--db` or set `ZOOMOLLO_DB`.
 1. **Find companies.** OpenStreetMap businesses inside the city's map boundary whose type or name matches your words (free, includes website, phone, address when listed). Plus web searches like "commercial HVAC companies in Austin, TX" and job-board searches. Directories (Yelp, BBB, Indeed, LinkedIn…) and "Top 10" list articles are filtered out.
 2. **Crawl each website.** Team, leadership, about, contact and careers pages first. Names and titles come from team cards and structured data; emails and phones from the page. If the careers page links to Greenhouse, Lever, Ashby or Workable, all open roles are pulled.
 3. **Map people.** Search-engine results for public profiles at the company ("Jane Doe - VP of Sales - Acme | LinkedIn"), read from the search results only. Only results that name the company are kept. Everyone is sorted into a department and a level (Exec, VP, Director, Manager, Staff).
-4. **Hiring managers.** For each open role: the closest more-senior people in the same department, then a recruiter. Small companies with no matching department fall back to the owner/CEO.
-5. **Emails.** Real addresses found on the site are matched to people. The company's email format is learned from them and used to guess the rest (marked `guessed`).
+4. **Open roles.** From Greenhouse/Lever/Ashby/Workable, and straight from the company's own careers page (schema.org `JobPosting` data, which most career sites publish for Google Jobs, plus links that read like job titles). Sitemaps are read too, so bio and job pages that aren't in the menu still get found.
+5. **Roles × contacts.** Every open role is cross-referenced with the company's people and contacts, strongest evidence first:
+
+   | Match | Meaning |
+   |---|---|
+   | named in posting | the person's name, email or phone appears in the job post |
+   | reports to | the post says "reports to the Service Manager" and that person was found |
+   | contact in posting | an email/phone in the post not tied to a known person |
+   | likely hiring manager | closest more-senior person in the same department |
+   | owner / exec | small company with no matching department leader |
+   | recruiter | HR / talent people |
+   | careers inbox | jobs@, careers@, hr@ style addresses |
+6. **Emails.** Real addresses found on the site or in job posts are matched to people. The company's email format is learned from them and used to guess the rest (marked `guessed`).
+
+## Fixing wrong email guesses
+
+Each person's email shows its status: `found`, `guessed (try 3/10)`, `confirmed`, `catch_all` or `failed`.
+
+- **✗ (or `zoomollo email-bad`)**: the address is blocked forever, its format counts against that company, and the person gets the next most likely guess. Formats that bounced at a company go to the back of the line for everyone there. Nickname variants (Robert → Bob, Rob) are tried after the formal name.
+- **✓ (or `zoomollo email-good`)**: the person is `confirmed`, that format becomes the company's format, and colleagues who are still on a guess are switched to it.
+- **Bounces in bulk**: paste bounce notices or a list into *Bounced emails* on the Prospect tab, or run `zoomollo bounces file.txt`. Only addresses already saved are acted on.
+- **After 10 wrong guesses** (or when no guesses are left) the person is marked `failed`.
+- **Automatic**: set `NEVERBOUNCE_API_KEY` or `ZEROBOUNCE_API_KEY` and use the *check* button or `zoomollo verify`. It checks the guess, moves to the next one on "invalid", and stops at "valid", at 10 tries, or when the company's mail server accepts every address ("catch-all": no check can tell, so the most likely guess is kept).
+- A guess that later appears in a job post or on the site is upgraded to `found` automatically.
 
 Direct phone numbers for individuals are only found when a company publishes them; otherwise you get the main line.
 

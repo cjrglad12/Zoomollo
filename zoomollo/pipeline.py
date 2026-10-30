@@ -15,8 +15,8 @@ from .crawler import Crawler, normalize_domain
 from .db import DB, now
 from .extract import is_role_email, looks_like_name, normalize_phone, social_kind
 from .jobboards import fetch_jobs
-from .orgmap import hiring_managers, search_people
-from .patterns import PATTERNS, guess_emails, has_mx, infer_pattern, render, split_name
+from .orgmap import search_people
+from .patterns import PATTERNS, has_mx, infer_pattern, render, split_name
 from .search import SearchProvider
 
 log = logging.getLogger(__name__)
@@ -75,6 +75,10 @@ def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
                 found["phones"] += 1
         for url in page.socials:
             db.add_social(company_id, social_kind(url) or "other", url)
+        for j in page.jobs:
+            db.add_job(company_id, "website", j["external_id"], j["title"], j["location"], j["url"],
+                       j["posted_at"], j["description"])
+            found["jobs"] += 1
         db.commit()
 
     if import_ats:
@@ -87,6 +91,7 @@ def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
     learn_pattern(db, company_id)
     db.update_company(company_id, last_crawled=now())
     db.commit()
+    assign_hiring_managers(db, company_id)
     return found
 
 
@@ -127,7 +132,7 @@ def import_jobs(db: DB, board: str, slug: str, domain: str | None = None,
         company_id = db.company(key, domain=normalize_domain(domain) if domain else None, name=slug)
     emails = phones = 0
     for j in jobs:
-        db.add_job(company_id, j.board, j.external_id, j.title, j.location, j.url, j.posted_at)
+        db.add_job(company_id, j.board, j.external_id, j.title, j.location, j.url, j.posted_at, j.description)
         for e in j.emails:
             emails += db.add_contact(company_id, "email", e, _kind(e), source_url=j.url)
         for p in j.phones:
@@ -153,50 +158,35 @@ def map_people(db: DB, company_id: int, provider: SearchProvider, max_queries: i
 
 
 def assign_hiring_managers(db: DB, company_id: int) -> int:
-    people = [dict(p) for p in db.people(company_id)]
-    jobs = [dict(j) for j in db.jobs(company_id=company_id, limit=10_000)]
-    db.conn.execute("UPDATE people SET hiring_for = NULL WHERE company_id = ?", (company_id,))
-    roles: dict[int, list[str]] = {}
-    for job in jobs:
-        for p in hiring_managers(people, [job]).get(job["id"], []):
-            roles.setdefault(p["id"], []).append(job["title"])
-    for pid, titles in roles.items():
-        uniq = list(dict.fromkeys(titles))
-        text = "; ".join(uniq[:5]) + (f" (+{len(uniq) - 5} more)" if len(uniq) > 5 else "")
-        db.conn.execute("UPDATE people SET hiring_for = ? WHERE id = ?", (text, pid))
-    db.commit()
-    return len(roles)
+    """Cross-reference people and contacts with the company's open roles."""
+    from .xref import cross_reference
+    return cross_reference(db, company_id)
 
 
 def guess_people_emails(db: DB, company_id: int) -> int:
-    """Fill in a best-guess email for each person without one."""
+    """First best-guess email for each person without one (see emailcheck for the retry loop)."""
+    from .emailcheck import guess_all
     row = db.company_row(company_id)
     if not row or not row["domain"] or has_mx(row["domain"]) is False:
         return 0
-    n = 0
-    for p in db.people(company_id):
-        if p["email"]:
-            continue
-        guesses = guess_emails(p["name"], row["domain"], row["email_pattern"])
-        if guesses:
-            db.add_person(company_id, p["name"], email=guesses[0], email_status="guessed")
-            db.add_contact(company_id, "email", guesses[0], "guessed", name=p["name"], title=p["title"])
-            n += 1
-    db.commit()
-    return n
+    return guess_all(db, company_id)
 
 
 def guess_for_person(db: DB, full_name: str, domain: str, title: str | None = None,
                      save: bool = True) -> list[str]:
-    """Best-guess emails for someone at a domain. Saves only the top guess."""
+    """Ordered email guesses for someone at a domain. With save, the person is
+    added and given the top guess, which then joins the bounce/retry loop."""
+    from .emailcheck import next_guess, ranked_patterns
+    from .patterns import candidates
     domain = normalize_domain(domain)
-    row = db.conn.execute("SELECT id, email_pattern FROM companies WHERE key = ?", (domain,)).fetchone()
-    pattern = row["email_pattern"] if row else None
-    guesses = guess_emails(full_name, domain, pattern)
+    row = db.conn.execute("SELECT id FROM companies WHERE key = ?", (domain,)).fetchone()
+    preferred, avoid = ranked_patterns(db, row["id"]) if row else ([], set())
+    guesses = [e for e, _ in candidates(full_name, domain, preferred, avoid) if not db.is_bad_email(e)]
     if save and guesses and split_name(full_name) and has_mx(domain) is not False:
         company_id = row["id"] if row else db.company(domain, domain=domain)
-        db.add_contact(company_id, "email", guesses[0], "guessed", name=full_name, title=title)
-        db.add_person(company_id, full_name, title, email=guesses[0], email_status="guessed")
+        pid = db.add_person(company_id, full_name, title, source="manual")
+        if pid and not db.conn.execute("SELECT email FROM people WHERE id = ?", (pid,)).fetchone()[0]:
+            next_guess(db, pid)
         db.commit()
     return guesses
 
@@ -242,9 +232,9 @@ def prospect(db: DB, what: str, where: str, limit: int = 25, crawl_pages: int = 
                 pass
         if find_people and provider:
             map_people(db, cid, provider)
-        assign_hiring_managers(db, cid)
         learn_pattern(db, cid)
         guess_people_emails(db, cid)
+        assign_hiring_managers(db, cid)
 
         people = db.people(cid)
         hm = sum(1 for p in people if p["hiring_for"])
@@ -287,4 +277,23 @@ def export_people_csv(db: DB, q: str = "", department: str | None = None,
         w.writerow([co["name"] or co["key"], co["domain"], co["city"], co["industry"], p["name"],
                     p["title"], p["department"], p["seniority"], p["email"], p["email_status"],
                     p["phone"], co["phone"], p["linkedin_url"], p["hiring_for"], p["source"]])
+    return buf.getvalue()
+
+
+HIRING_FIELDS = ["company", "domain", "city", "job_title", "job_location", "job_url", "board", "match",
+                 "name", "title", "email", "email_status", "phone", "linkedin_url"]
+
+
+def export_hiring_csv(db: DB, q: str = "") -> str:
+    """One row per open role x matched contact, strongest match first."""
+    from .xref import hiring_rows
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(HIRING_FIELDS)
+    for r in hiring_rows(db, q):
+        email = r["email"] or (r["value"] if r["value"] and "@" in r["value"] else None)
+        phone = r["phone"] or (r["value"] if r["value"] and "@" not in r["value"] else None)
+        w.writerow([r["company_name"] or r["company_key"], r["domain"], r["city"], r["job_title"], r["location"],
+                    r["job_url"], r["board"], r["reason"], r["name"], r["title"], email, r["email_status"],
+                    phone, r["linkedin_url"]])
     return buf.getvalue()

@@ -34,3 +34,15 @@ def test_web_ui(tmp_path):
     assert c.get("/companies").status_code == 200
     assert c.get("/jobs").status_code == 200
     assert b"jane@acme.com" in c.get("/export.csv").data
+
+
+def test_sitemap_finds_unlinked_pages(site, tmp_path):
+    site["/robots.txt"] = "User-agent: *\nSitemap: https://acme.test/sm-index.xml"
+    site["/sm-index.xml"] = "<sitemapindex><sitemap><loc>https://acme.test/sm-team.xml</loc></sitemap></sitemapindex>"
+    site["/sm-team.xml"] = ("<urlset><url><loc>https://acme.test/team/carla-diaz-bio</loc></url>"
+                            "<url><loc>https://acme.test/blog/x</loc></url></urlset>")
+    site["/team/carla-diaz-bio"] = '<h2>Carla Diaz</h2><p>Chief Operating Officer</p>'
+    db = DB(str(tmp_path / "s.db"))
+    pipeline.crawl_company(db, "acme.test", max_pages=20, delay=0)
+    people = {p["name"]: p for p in db.people()}
+    assert people["Carla Diaz"]["seniority"] == "c_level"

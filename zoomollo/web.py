@@ -10,7 +10,6 @@ from flask import Flask, Response, abort, redirect, render_template_string, requ
 
 from . import pipeline
 from .db import DB
-from .orgmap import hiring_managers
 from .search import get_provider
 
 DEPT_LABELS = {
@@ -19,6 +18,16 @@ DEPT_LABELS = {
     "hr": "HR & Recruiting", "customer": "Customer", "it": "IT", "legal": "Legal", "other": "Other",
 }
 LEVEL_LABELS = {"c_level": "Exec", "vp": "VP", "director": "Director", "manager": "Manager", "staff": "Staff"}
+
+EMAIL_MACRO = """{% macro email_cell(p, verify) %}
+{% if p.email %}<a href="mailto:{{ p.email }}">{{ p.email }}</a>
+<span class="chip st-{{ p.email_status }}">{{ p.email_status }}{% if p.email_status == 'guessed' %} · try {{ (p.email_attempts or 0) + 1 }}/10{% endif %}</span>
+{% if p.email_status != 'confirmed' %}<form class="fb" method="post" action="{{ url_for('email_feedback', pid=p.id, action='good') }}"><button title="Correct">✓</button></form>
+<form class="fb" method="post" action="{{ url_for('email_feedback', pid=p.id, action='bad') }}"><button class="no" title="Wrong / bounced: try the next guess">✗</button></form>
+{% if verify %}<form class="fb" method="post" action="{{ url_for('email_feedback', pid=p.id, action='verify') }}"><button class="ghost" title="Check with your verification service, re-guessing until valid">check</button></form>{% endif %}{% endif %}
+{% elif p.email_status == 'failed' %}<span class="chip st-failed">no match after {{ p.email_attempts }} tries</span>
+{% else %}<form class="fb" method="post" action="{{ url_for('email_feedback', pid=p.id, action='guess') }}"><button class="ghost">guess email</button></form>{% endif %}
+{% endmacro %}"""
 
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -51,6 +60,11 @@ td.v,.v{font-family:ui-monospace,Menlo,monospace;font-size:13px}.chip{background
 .person{border-top:1px solid var(--line);padding:8px 0}.person:first-of-type{border-top:none}
 .person .n{font-weight:600}.person .t{color:var(--muted);font-size:13px}.person .c{font-size:13px;margin-top:2px;word-break:break-all}
 h2{margin:0 0 4px}.sub{color:var(--muted);margin-bottom:16px}.section{margin:22px 0 10px;font-size:15px}
+form.fb{display:inline}form.fb button{padding:1px 7px;font-size:12px;border-radius:6px;margin-left:2px}
+form.fb button.no{background:#c2410c}form.fb button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
+.st-confirmed,.st-found{background:#dcfce7;color:#166534}.st-failed{background:#fee2e2;color:#991b1b}.st-catch_all{background:var(--hm);color:var(--hmink)}
+@media (prefers-color-scheme:dark){.st-confirmed,.st-found{background:#14361f;color:#86efac}.st-failed{background:#3f1515;color:#fca5a5}}
+.reason{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
 a{color:var(--accent)}.warn{background:var(--hm);color:var(--hmink);padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:12px}
 </style></head><body>
 <header><b>Zoomollo</b><nav>
@@ -79,25 +93,29 @@ FIND = """<div class="grid">
 <form class="card" method="post" action="{{ url_for('enqueue') }}"><h3>Import job boards</h3>
 <p>board:slug per line (greenhouse, lever, ashby, workable), or a bare slug to try all.</p>
 <input type="hidden" name="action" value="jobs"><textarea name="items" placeholder="greenhouse:stripe"></textarea><button>Import</button></form>
+<form class="card" method="post" action="{{ url_for('enqueue') }}"><h3>Bounced emails</h3>
+<p>Paste bounce notices, a CSV, or addresses. Each bad address is blocked and that person gets the next guess (up to 10).</p>
+<input type="hidden" name="action" value="bounces"><textarea name="items" placeholder="Delivery to jane.doe@acme.com failed…"></textarea><button>Process bounces</button>
+{% if bounced %}<div class="log" style="margin-top:10px">{{ bounced|join('\n') }}</div>{% endif %}</form>
 <form class="card" method="post" action="{{ url_for('enqueue') }}"><h3>Guess a work email</h3>
 <input type="hidden" name="action" value="guess"><input name="name" placeholder="Jane Doe" style="width:100%;margin-bottom:8px">
 <input name="domain" placeholder="acme.com" style="width:100%;margin-bottom:8px"><button>Guess</button>
 {% if guesses %}<div class="log" style="margin-top:10px">{{ guesses|join('\\n') }}</div>{% endif %}</form>
 </div>"""
 
-PEOPLE = """<form class="bar"><input type="search" name="q" value="{{ q }}" placeholder="Name, title, company, city, industry…">
+PEOPLE = EMAIL_MACRO + """<form class="bar"><input type="search" name="q" value="{{ q }}" placeholder="Name, title, company, city, industry…">
 <select name="department"><option value="">All departments</option>{% for k,v in depts.items() %}<option value="{{ k }}" {{ 'selected' if k==dept }}>{{ v }}</option>{% endfor %}</select>
 <label class="chip" style="padding:8px 10px"><input type="checkbox" name="hiring" value="1" {{ 'checked' if hiring }} style="padding:0"> Hiring managers</label>
 <button>Search</button><a class="btn" href="{{ url_for('export_people', q=q, department=dept, hiring=hiring) }}">Export CSV</a></form>
 <div class="wrap"><table><tr><th>Name</th><th>Title</th><th>Company</th><th>Email</th><th>Phone</th><th>Hiring for</th><th></th></tr>
 {% for p in rows %}<tr><td><b>{{ p.name }}</b></td><td>{{ p.title or '' }}</td>
 <td><a href="{{ url_for('company', cid=p.company_id) }}">{{ p.company_name or p.company_key }}</a></td>
-<td class="v">{% if p.email %}<a href="mailto:{{ p.email }}">{{ p.email }}</a> <span class="chip">{{ p.email_status }}</span>{% endif %}</td>
+<td class="v">{{ email_cell(p, verify) }}</td>
 <td class="v">{{ p.phone or '' }}</td><td class="wraptext">{% if p.hiring_for %}<span class="chip hm">{{ p.hiring_for }}</span>{% endif %}</td>
 <td>{% if p.linkedin_url %}<a href="{{ p.linkedin_url }}" target="_blank" rel="noopener">profile</a>{% endif %}</td></tr>
 {% else %}<tr><td colspan="7">No people yet. Start on the <a href="{{ url_for('find') }}">Prospect</a> tab.</td></tr>{% endfor %}</table></div>"""
 
-COMPANY = """<h2>{{ co.name or co.key }}</h2>
+COMPANY = EMAIL_MACRO + """<h2>{{ co.name or co.key }}</h2>
 <div class="sub">{% if co.domain %}<a href="https://{{ co.domain }}" target="_blank" rel="noopener">{{ co.domain }}</a> · {% endif %}
 {% if co.industry %}{{ co.industry }} · {% endif %}{% if co.city %}{{ co.city }} · {% endif %}
 {% if co.phone %}<span class="v">{{ co.phone }}</span> · {% endif %}{% if co.address %}{{ co.address }} · {% endif %}
@@ -107,16 +125,18 @@ COMPANY = """<h2>{{ co.name or co.key }}</h2>
 {% if people %}<div class="org">{% for d, ps in org %}<div class="card dept"><h4>{{ depts[d] }}</h4>
 {% for p in ps %}<div class="person"><div class="n">{{ p.name }} {% if p.hiring_for %}<span class="chip hm">hiring</span>{% endif %}</div>
 <div class="t">{{ p.title or '' }}{% if p.seniority %} · {{ levels[p.seniority] }}{% endif %}</div>
-<div class="c v">{% if p.email %}<a href="mailto:{{ p.email }}">{{ p.email }}</a> <span class="chip">{{ p.email_status }}</span>{% endif %}
+<div class="c v">{{ email_cell(p, verify) }}
 {% if p.phone %}<br>{{ p.phone }}{% endif %}{% if p.linkedin_url %}<br><a href="{{ p.linkedin_url }}" target="_blank" rel="noopener">profile</a>{% endif %}</div>
 </div>{% endfor %}</div>{% endfor %}</div>
 {% else %}<p class="muted">No people found yet.</p>{% endif %}
 
-<div class="section"><b>Open roles & likely hiring managers</b> <span class="muted">· {{ jobs|length }}</span></div>
-<div class="wrap"><table><tr><th>Role</th><th>Location</th><th>Likely hiring manager</th></tr>
+<div class="section"><b>Open roles × contacts</b> <span class="muted">· {{ jobs|length }}</span></div>
+<div class="wrap"><table><tr><th>Role</th><th>Location</th><th>Source</th><th>Matched contacts</th></tr>
 {% for j in jobs %}<tr><td>{% if j.url %}<a href="{{ j.url }}" target="_blank" rel="noopener">{{ j.title }}</a>{% else %}{{ j.title }}{% endif %}</td>
-<td>{{ j.location or '' }}</td><td class="wraptext">{% for p in hm.get(j.id, []) %}{{ p.name }} <span class="muted">({{ p.title or '' }})</span>{% if p.email %} <span class="v">{{ p.email }}</span>{% endif %}<br>{% else %}<span class="muted">unknown</span>{% endfor %}</td></tr>
-{% else %}<tr><td colspan="3">No open roles found.</td></tr>{% endfor %}</table></div>
+<td>{{ j.location or '' }}</td><td><span class="chip">{{ j.board }}</span></td><td class="wraptext">{% for m in matches.get(j.id, []) %}
+<div><span class="reason">{{ m.reason }}</span> {% if m.name %}{{ m.name }} <span class="muted">({{ m.title or '' }})</span>{% endif %}
+<span class="v">{{ m.email or m.value or '' }}</span></div>{% else %}<span class="muted">none yet</span>{% endfor %}</td></tr>
+{% else %}<tr><td colspan="4">No open roles found.</td></tr>{% endfor %}</table></div>
 
 <div class="section"><b>Company contacts</b></div>
 <div class="wrap"><table><tr><th>Contact</th><th>Kind</th><th>Source</th></tr>
@@ -140,11 +160,14 @@ CONTACTS = """<form class="bar"><input type="search" name="q" value="{{ q }}" pl
 <td>{% if r.source_url and r.source_url.startswith('http') %}<a href="{{ r.source_url }}" target="_blank" rel="noopener">page</a>{% endif %}</td></tr>
 {% else %}<tr><td colspan="6">Nothing yet.</td></tr>{% endfor %}</table></div>"""
 
-JOBS = """<form class="bar"><input type="search" name="q" value="{{ q }}" placeholder="Role, company, location…"><button>Search</button></form>
-<div class="wrap"><table><tr><th>Company</th><th>Role</th><th>Department</th><th>Location</th><th>Board</th></tr>
+JOBS = """<form class="bar"><input type="search" name="q" value="{{ q }}" placeholder="Role, company, city, contact…"><button>Search</button>
+<a class="btn" href="{{ url_for('export_hiring', q=q) }}">Export roles × contacts CSV</a></form>
+<div class="wrap"><table><tr><th>Company</th><th>Role</th><th>Location</th><th>Source</th><th>Best contacts</th></tr>
 {% for j in rows %}<tr><td><a href="{{ url_for('company', cid=j.company_id) }}">{{ j.company_name or j.company_key }}</a></td>
 <td>{% if j.url %}<a href="{{ j.url }}" target="_blank" rel="noopener">{{ j.title }}</a>{% else %}{{ j.title }}{% endif %}</td>
-<td>{{ depts.get(j.department or 'other', '') }}</td><td>{{ j.location or '' }}</td><td><span class="chip">{{ j.board }}</span></td></tr>
+<td>{{ j.location or '' }}</td><td><span class="chip">{{ j.board }}</span></td>
+<td class="wraptext">{% for m in matches.get(j.id, [])[:3] %}<div><span class="reason">{{ m.reason }}</span> {{ m.name or '' }}
+<span class="v">{{ m.email or m.value or '' }}</span></div>{% else %}<span class="muted">none yet</span>{% endfor %}</td></tr>
 {% else %}<tr><td colspan="5">No jobs yet.</td></tr>{% endfor %}</table></div>"""
 
 
@@ -190,13 +213,15 @@ def create_app(db_path: str | None = None) -> Flask:
 
     def render(tab, tpl, **ctx):
         db = DB(db_path)
-        body = render_template_string(tpl, depts=DEPT_LABELS, levels=LEVEL_LABELS, **ctx)
+        from .emailcheck import get_verifier
+        body = render_template_string(tpl, depts=DEPT_LABELS, levels=LEVEL_LABELS,
+                                      verify=get_verifier() is not None, **ctx)
         return render_template_string(PAGE, tab=tab, body=body, stats=db.stats(),
                                       busy=state["busy"] + tasks.qsize())
 
     @app.get("/")
     def find():
-        return render("find", FIND, log=list(log), guesses=request.args.getlist("g"),
+        return render("find", FIND, log=list(log), guesses=request.args.getlist("g"), bounced=request.args.getlist("b"),
                       provider=get_provider() is not None)
 
     @app.post("/")
@@ -206,6 +231,11 @@ def create_app(db_path: str | None = None) -> Flask:
             name, domain = request.form.get("name", ""), request.form.get("domain", "")
             guesses = pipeline.guess_for_person(DB(db_path), name, domain) if name and domain else []
             return redirect(url_for("find", g=guesses[:5]))
+        if action == "bounces":
+            from .emailcheck import import_bounces
+            res = import_bounces(DB(db_path), request.form.get("items", ""))
+            lines = [f"✗ {b} ({n}) → {x or 'no guesses left'}" for b, n, x in res] or ["No saved addresses found in that text."]
+            return redirect(url_for("find", b=lines))
         if action == "prospect":
             what, where = request.form.get("what", "").strip(), request.form.get("where", "").strip()
             if what and where:
@@ -237,8 +267,9 @@ def create_app(db_path: str | None = None) -> Flask:
             groups.setdefault(p["department"] or "other", []).append(p)
         org = sorted(groups.items(), key=lambda kv: list(DEPT_LABELS).index(kv[0]) if kv[0] in DEPT_LABELS else 99)
         contacts = [r for r in db.search(limit=10_000) if r["company_id"] == cid and r["kind"] in ("role", "company")]
+        matches = {j["id"]: db.job_contacts(j["id"]) for j in jobs}
         return render("companies", COMPANY, co=co, people=ppl, org=org, jobs=jobs,
-                      hm=hiring_managers(ppl, jobs), contacts=contacts)
+                      matches=matches, contacts=contacts)
 
     @app.get("/companies")
     def companies():
@@ -255,7 +286,9 @@ def create_app(db_path: str | None = None) -> Flask:
     @app.get("/jobs")
     def jobs():
         q = request.args.get("q", "")
-        return render("jobs", JOBS, rows=DB(db_path).jobs(q), q=q)
+        db = DB(db_path)
+        rows = db.jobs(q)
+        return render("jobs", JOBS, rows=rows, q=q, matches={j["id"]: db.job_contacts(j["id"]) for j in rows})
 
     @app.get("/export.csv")
     def export():
@@ -263,6 +296,29 @@ def create_app(db_path: str | None = None) -> Flask:
                                    request.args.get("type") or None, request.args.get("kind") or None)
         return Response(data, mimetype="text/csv",
                         headers={"Content-Disposition": "attachment; filename=zoomollo-contacts.csv"})
+
+    @app.post("/person/<int:pid>/email/<action>")
+    def email_feedback(pid: int, action: str):
+        from . import emailcheck
+        db = DB(db_path)
+        row = db.conn.execute("SELECT * FROM people WHERE id = ?", (pid,)).fetchone()
+        if not row:
+            abort(404)
+        if action == "good" and row["email"]:
+            emailcheck.mark_good(db, row["email"])
+        elif action == "bad" and row["email"]:
+            emailcheck.mark_bad(db, row["email"], "marked wrong")
+        elif action == "guess":
+            emailcheck.next_guess(db, pid)
+        elif action == "verify" and (v := emailcheck.get_verifier()):
+            emailcheck.auto_verify(db, pid, v)
+        pipeline.assign_hiring_managers(db, row["company_id"])
+        return redirect(request.referrer or url_for("people"))
+
+    @app.get("/hiring.csv")
+    def export_hiring():
+        return Response(pipeline.export_hiring_csv(DB(db_path), request.args.get("q", "")), mimetype="text/csv",
+                        headers={"Content-Disposition": "attachment; filename=zoomollo-roles-contacts.csv"})
 
     @app.get("/people.csv")
     def export_people():

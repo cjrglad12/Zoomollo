@@ -37,6 +37,22 @@ def main(argv: list[str] | None = None) -> int:
     pe.add_argument("--hiring", action="store_true", help="Only likely hiring managers")
     pe.add_argument("--limit", type=int, default=200)
 
+    hi = sub.add_parser("hiring", help="Open roles cross-referenced with contacts")
+    hi.add_argument("query", nargs="?", default="")
+    hi.add_argument("--limit", type=int, default=200)
+
+    eb = sub.add_parser("email-bad", help="Mark email(s) wrong/bounced and move to the next guess")
+    eb.add_argument("emails", nargs="+")
+    eg = sub.add_parser("email-good", help="Mark email(s) correct; locks in that company's format")
+    eg.add_argument("emails", nargs="+")
+    bo = sub.add_parser("bounces", help="Import bounce notices / a list of bad addresses from a file ('-' = stdin)")
+    bo.add_argument("file")
+    ve = sub.add_parser("verify", help="Check guesses with NeverBounce/ZeroBounce, re-guessing until valid "
+                                       "or 10 tries")
+    ve.add_argument("query", nargs="?", default="", help="Limit to matching people/companies")
+    ve.add_argument("--hiring", action="store_true", help="Only likely hiring managers")
+    ve.add_argument("--limit", type=int, default=50)
+
     c = sub.add_parser("crawl", help="Crawl company websites for emails and phones")
     c.add_argument("domains", nargs="+", help="Domains, or @file.txt with one per line")
     c.add_argument("--max-pages", type=int, default=40)
@@ -72,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--kind", choices=["person", "role", "company", "guessed"])
     e.add_argument("--people", action="store_true", help="Export people (org map) instead of raw contacts")
     e.add_argument("--hiring", action="store_true", help="With --people: hiring managers only")
+    e.add_argument("--jobs", action="store_true", help="Export open roles x matched contacts")
 
     x = sub.add_parser("suppress", help="Opt someone out: deletes and blocks an email, phone or @domain")
     x.add_argument("value")
@@ -104,6 +121,47 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "people":
         _print_rows(db.people(q=a.query, department=a.department, hiring_only=a.hiring, limit=a.limit),
                     ["company_name", "name", "title", "department", "email", "email_status", "hiring_for"])
+
+    elif a.cmd == "hiring":
+        from .xref import hiring_rows
+        last = None
+        for r in hiring_rows(db, a.query, limit=a.limit):
+            if r["job_id"] != last:
+                print(f"\n{r['company_name'] or r['company_key']}: {r['job_title']} ({r['location'] or '-'})")
+                last = r["job_id"]
+            if r["reason"]:
+                who = r["name"] or r["value"]
+                extra = " ".join(x for x in [r["title"] and f"({r['title']})", r["email"], r["phone"]] if x)
+                print(f"   [{r['reason']}] {who} {extra}")
+
+    elif a.cmd in ("email-bad", "email-good", "bounces"):
+        from . import emailcheck
+        if a.cmd == "email-good":
+            for e_ in a.emails:
+                n = emailcheck.mark_good(db, e_)
+                print(f"✓ {e_} confirmed; re-guessed {n} colleague(s) with that format")
+        else:
+            if a.cmd == "bounces":
+                text = sys.stdin.read() if a.file == "-" else open(a.file).read()
+                results = emailcheck.import_bounces(db, text)
+            else:
+                results = [(e_, name, nxt) for e_ in a.emails for name, nxt in emailcheck.mark_bad(db, e_)]
+            for bad, name, nxt in results:
+                print(f"✗ {bad} ({name}) -> " + (f"next guess {nxt}" if nxt else "no guesses left (failed)"))
+            if not results:
+                print("No saved people had those addresses (they're still blocked from future guesses).")
+
+    elif a.cmd == "verify":
+        from . import emailcheck
+        verifier = emailcheck.get_verifier()
+        if not verifier:
+            print("Set NEVERBOUNCE_API_KEY or ZEROBOUNCE_API_KEY first.", file=sys.stderr)
+            return 1
+        rows = [p for p in db.people(q=a.query, hiring_only=a.hiring, limit=10_000)
+                if p["email_status"] in (None, "guessed")][: a.limit]
+        for p in rows:
+            email, status = emailcheck.auto_verify(db, p["id"], verifier)
+            print(f"{p['name']} ({p['company_name']}): {email or '-'} [{status}]")
 
     elif a.cmd == "crawl":
         domains = []
@@ -149,7 +207,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(db.stats(), indent=2))
 
     elif a.cmd == "export":
-        data = (pipeline.export_people_csv(db, a.query, hiring_only=a.hiring) if a.people
+        data = (pipeline.export_hiring_csv(db, a.query) if a.jobs
+                else pipeline.export_people_csv(db, a.query, hiring_only=a.hiring) if a.people
                 else pipeline.export_csv(db, a.query, a.type, a.kind))
         if a.out == "-":
             sys.stdout.write(data)

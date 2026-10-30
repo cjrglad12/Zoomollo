@@ -73,6 +73,28 @@ CREATE TABLE IF NOT EXISTS people (
     UNIQUE (company_id, name_key)
 );
 CREATE INDEX IF NOT EXISTS people_company ON people(company_id);
+CREATE TABLE IF NOT EXISTS bad_emails (     -- addresses known not to exist (bounced / verifier said invalid)
+    value TEXT PRIMARY KEY,
+    reason TEXT,
+    added_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS pattern_feedback (  -- which email formats worked / bounced per company
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    pattern TEXT NOT NULL,
+    good INTEGER NOT NULL DEFAULT 0,
+    bad INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (company_id, pattern)
+);
+CREATE TABLE IF NOT EXISTS job_contacts (      -- contacts cross-referenced to an open role
+    id INTEGER PRIMARY KEY,
+    job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    person_id INTEGER REFERENCES people(id) ON DELETE CASCADE,
+    value TEXT,                                -- email / phone when there is no person
+    reason TEXT NOT NULL,
+    rank INTEGER NOT NULL,
+    UNIQUE (job_id, person_id, value)
+);
+CREATE INDEX IF NOT EXISTS job_contacts_job ON job_contacts(job_id);
 CREATE INDEX IF NOT EXISTS contacts_company ON contacts(company_id);
 CREATE INDEX IF NOT EXISTS jobs_company ON jobs(company_id);
 """
@@ -90,8 +112,11 @@ def default_path() -> str:
 MIGRATIONS = {
     "companies": {"city": "TEXT", "industry": "TEXT", "address": "TEXT", "phone": "TEXT",
                   "source": "TEXT"},
-    "jobs": {"department": "TEXT"},
-    "people": {"pushed_to_loxo": "INTEGER NOT NULL DEFAULT 0"},
+    "jobs": {"department": "TEXT", "description": "TEXT"},
+    "people": {"pushed_to_loxo": "INTEGER NOT NULL DEFAULT 0",
+               "email_pattern": "TEXT",            # format behind the current guess
+               "email_attempts": "INTEGER NOT NULL DEFAULT 0",
+               "tried_emails": "TEXT"},             # JSON list of addresses that bounced
 }
 
 
@@ -158,7 +183,7 @@ class DB:
                     source_url: str | None = None) -> bool:
         """Insert or refresh a contact. Returns False if suppressed."""
         value = value.lower() if type_ == "email" else value
-        if self.is_suppressed(value):
+        if self.is_suppressed(value) or (type_ == "email" and self.is_bad_email(value)):
             return False
         t = now()
         self.conn.execute(
@@ -180,8 +205,9 @@ class DB:
         name = " ".join(name.split())
         key = name.lower()
         email = fields.get("email")
-        if email and self.is_suppressed(email):
-            return None
+        if email and (self.is_suppressed(email) or self.is_bad_email(email)):
+            email = None
+            fields.pop("email", None)
         row = self.conn.execute("SELECT * FROM people WHERE company_id = ? AND name_key = ?",
                                 (company_id, key)).fetchone()
         if row is None:
@@ -240,13 +266,28 @@ class DB:
                           (company_id, kind, url))
 
     def add_job(self, company_id: int, board: str, external_id: str, title: str,
-                location: str | None, url: str | None, posted_at: str | None) -> None:
+                location: str | None, url: str | None, posted_at: str | None,
+                description: str | None = None) -> None:
         from .orgmap import department
         self.conn.execute(
-            "INSERT OR IGNORE INTO jobs (company_id, board, external_id, title, location, url, posted_at, "
-            "first_seen, department) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (company_id, board, external_id, title, location, url, posted_at, now(), department(title)),
+            "INSERT INTO jobs (company_id, board, external_id, title, location, url, posted_at, "
+            "first_seen, department, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(board, external_id) DO UPDATE SET "
+            "location = COALESCE(jobs.location, excluded.location), "
+            "posted_at = COALESCE(jobs.posted_at, excluded.posted_at), "
+            "description = COALESCE(excluded.description, jobs.description)",
+            (company_id, board, external_id, title, location, url, posted_at, now(), department(title),
+             (description or None) and description[:20000]),
         )
+
+    def is_bad_email(self, email: str) -> bool:
+        return self.conn.execute("SELECT 1 FROM bad_emails WHERE value = ?", (email.lower(),)).fetchone() is not None
+
+    def job_contacts(self, job_id: int) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT jc.*, p.name, p.title, p.email, p.email_status, p.phone, p.linkedin_url "
+            "FROM job_contacts jc LEFT JOIN people p ON p.id = jc.person_id "
+            "WHERE jc.job_id = ? ORDER BY jc.rank, jc.id", (job_id,)).fetchall()
 
     def named_emails(self, company_id: int) -> list[tuple[str, str]]:
         rows = self.conn.execute(

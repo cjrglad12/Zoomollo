@@ -15,7 +15,10 @@ SENIORITY_RANK = {"c_level": 5, "vp": 4, "director": 3, "manager": 2, "staff": 1
 _SENIORITY = [
     ("vp", r"\b(vp|svp|evp|avp|vice[\s-]president)\b"),
     ("c_level", r"\b(ceo|cfo|coo|cto|cmo|cio|cro|chro|cpo|chief|founder|co-?founder|(?<!product )owner|"
-                r"president|managing partner|managing director|senior partner)\b|^partner\s*($|,|\bat\b|-)"),
+                r"president|managing partner|managing director|senior partner|founding partner|"
+                r"name partner|equity partner|managing principal)\b"
+                r"(?!\s+(manager|success|marketing|relations|development|engineer|specialist|coordinator|"
+                r"account|program|enablement|operations))|^(partner|principal)\s*($|,|&|\band\b|\bat\b|-)"),
     ("director", r"\b(director|head of|head,|head\b)"),
     ("manager", r"\b(manager|mgr|lead|leader|supervisor|superintendent|foreman|team lead|"
                 r"general manager)\b"),

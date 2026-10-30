@@ -20,7 +20,32 @@ PATTERNS = [
     "{last}{f}",
     "{last}",
     "{first}-{last}",
+    "{first}.{l}",
+    "{f}_{last}",
+    "{last}{first}",
+    "{last}_{first}",
+    "{f}{l}",
+    "{last}.{f}",
 ]
+
+# Common nickname pairs; tried after the formal-name guesses.
+NICKNAMES = {
+    "robert": ["bob", "rob"], "william": ["bill", "will"], "richard": ["rick", "rich"],
+    "james": ["jim", "jimmy"], "john": ["jack"], "joseph": ["joe"], "michael": ["mike"],
+    "thomas": ["tom"], "christopher": ["chris"], "daniel": ["dan"], "matthew": ["matt"],
+    "anthony": ["tony"], "steven": ["steve"], "stephen": ["steve"], "andrew": ["andy", "drew"],
+    "joshua": ["josh"], "kenneth": ["ken"], "edward": ["ed", "ted"], "benjamin": ["ben"],
+    "samuel": ["sam"], "nicholas": ["nick"], "jonathan": ["jon"], "timothy": ["tim"],
+    "patrick": ["pat"], "gregory": ["greg"], "jeffrey": ["jeff"], "charles": ["charlie", "chuck"],
+    "david": ["dave"], "donald": ["don"], "ronald": ["ron"], "douglas": ["doug"],
+    "elizabeth": ["liz", "beth"], "jennifer": ["jen", "jenny"], "katherine": ["kate", "katie"],
+    "catherine": ["cathy", "kate"], "kimberly": ["kim"], "rebecca": ["becky"], "patricia": ["pat", "trish"],
+    "susan": ["sue"], "margaret": ["maggie", "meg"], "deborah": ["deb"], "jessica": ["jess"],
+    "christina": ["chris", "tina"], "alexandra": ["alex"], "alexander": ["alex"], "victoria": ["vicky"],
+    "bob": ["robert"], "bill": ["william"], "mike": ["michael"], "jim": ["james"], "tom": ["thomas"],
+    "chris": ["christopher"], "dan": ["daniel"], "matt": ["matthew"], "steve": ["steven"],
+    "joe": ["joseph"], "dave": ["david"], "andy": ["andrew"], "liz": ["elizabeth"], "kate": ["katherine"],
+}
 
 
 def _slug(s: str) -> str:
@@ -60,18 +85,36 @@ def infer_pattern(examples: list[tuple[str, str]]) -> tuple[str, float] | None:
     return pattern, n / usable
 
 
-def guess_emails(full_name: str, domain: str, known_pattern: str | None = None) -> list[str]:
+def candidates(full_name: str, domain: str, preferred: list[str] | None = None,
+               avoid: set[str] = frozenset()) -> list[tuple[str, str]]:
+    """Ordered (email, pattern) guesses. `preferred` patterns go first, `avoid`
+    patterns (ones that bounced at this company) go last. Nickname variants
+    are appended after the formal-name guesses."""
     split = split_name(full_name)
     if not split:
         return []
-    order = ([known_pattern] if known_pattern else []) + [p for p in PATTERNS if p != known_pattern]
-    seen, out = set(), []
-    for p in order:
-        e = f"{render(p, *split)}@{domain.lower()}"
+    first, last = split
+    order = list(dict.fromkeys([*(preferred or []), *PATTERNS]))
+    order = [p for p in order if p not in avoid] + [p for p in order if p in avoid]
+    seen: set[str] = set()
+    out: list[tuple[str, str]] = []
+
+    def add(f: str, p: str, tag: str = ""):
+        e = f"{render(p, f, last)}@{domain.lower()}"
         if e not in seen:
             seen.add(e)
-            out.append(e)
+            out.append((e, p + tag))
+
+    for p in order:
+        add(first, p)
+    for nick in NICKNAMES.get(first, []):
+        for p in order[:4]:
+            add(nick, p, " (nickname)")
     return out
+
+
+def guess_emails(full_name: str, domain: str, known_pattern: str | None = None) -> list[str]:
+    return [e for e, _ in candidates(full_name, domain, [known_pattern] if known_pattern else None)]
 
 
 @lru_cache(maxsize=2048)
