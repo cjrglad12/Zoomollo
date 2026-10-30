@@ -86,7 +86,7 @@ Direct phone numbers for individuals are only found when a company publishes the
 | OpenStreetMap | Overpass API, inside the city's bounding box | Company names, websites, phones, addresses |
 | Web search | Brave / SerpAPI / SearXNG | More companies, and people from public profile results |
 | Company websites | Crawler goes for contact, team, about, leadership and careers pages first. Reads `mailto:`/`tel:` links, page text, obfuscated addresses (`jane [at] acme [dot] com`) and schema.org `Person` data. | Emails, phones, names and titles, social profile links |
-| Job boards | Official public JSON feeds for Greenhouse, Lever, Ashby and Workable | Open roles (hiring signals) plus recruiter emails and phones in job posts |
+| Job boards | Official public JSON feeds for Greenhouse, Lever, Ashby and Workable | Open roles (hiring signals) plus hiring contacts named in job posts |
 | Email format | Learned from named emails found on a company's site (e.g. `first.last`, 90% of examples) | Guessed addresses for any name at that company, labelled `guessed` |
 
 Every contact is labelled by kind: `person` (seen with a name), `company` (main phone lines) or `guessed`, and stores the page it was found on.
