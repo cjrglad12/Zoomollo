@@ -31,9 +31,9 @@ def test_hiring_managers():
     jobs = [{"id": 10, "title": "Account Executive"}, {"id": 11, "title": "Sales Director"},
             {"id": 12, "title": "HVAC Technician"}]
     hm = hiring_managers(people, jobs)
-    assert [p["name"] for p in hm[10]] == ["Cy", "Ben", "Di"]
-    assert [p["name"] for p in hm[11]] == ["Ben", "Di"]
-    assert [p["name"] for p in hm[12]] == ["Ann", "Di"]  # no ops leader known -> owner/CEO
+    assert [p["name"] for p in hm[10]] == ["Cy", "Ben"]
+    assert [p["name"] for p in hm[11]] == ["Ben"]
+    assert [p["name"] for p in hm[12]] == ["Ann"]  # no ops leader known -> owner/CEO; never the recruiter
 
 
 def test_team_cards_and_ats():

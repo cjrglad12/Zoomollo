@@ -16,6 +16,7 @@ import os
 import requests
 
 from .db import DB, now
+from .exclusions import is_excluded_email
 from .extract import find_emails
 from .patterns import candidates
 
@@ -82,7 +83,7 @@ def next_guess(db: DB, person_id: int) -> str | None:
         return None
     preferred, avoid = ranked_patterns(db, row["company_id"])
     for email, pattern in candidates(row["name"], row["domain"], preferred, avoid):
-        if email in tried or db.is_bad_email(email) or db.is_suppressed(email):
+        if email in tried or db.is_bad_email(email) or db.is_suppressed(email) or is_excluded_email(email):
             continue
         if db.conn.execute("SELECT 1 FROM people WHERE email = ? AND id != ?", (email, person_id)).fetchone():
             continue  # a colleague already owns that address

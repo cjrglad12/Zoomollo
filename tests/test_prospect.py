@@ -45,12 +45,11 @@ def test_prospect_end_to_end(site, tmp_path, monkeypatch):
     assert acme["name"] == "Acme Inc" and acme["city"] == "Austin, TX" and acme["phone"] == "+1 512 555 0100"
     assert acme["email_pattern"] == "{first}.{last}"
     people = {p["name"]: p for p in db.people(acme["id"])}
-    assert set(people) == {"Jane Doe", "Bob Smith", "Pat Kim", "Lee Wong"}
+    assert set(people) == {"Jane Doe", "Bob Smith", "Pat Kim"}  # talent-acquisition person excluded
     assert people["Bob Smith"]["email"] == "bob.smith@acme.test" and people["Bob Smith"]["email_status"] == "found"
     assert people["Pat Kim"]["email"] == "pat.kim@acme.test" and people["Pat Kim"]["email_status"] == "guessed"
-    # Technician role -> Service Manager (ops, closest level up) + recruiter
+    # Technician role -> Service Manager (ops, closest level up)
     assert people["Pat Kim"]["hiring_for"] == "HVAC Service Technician"
-    assert people["Lee Wong"]["hiring_for"] == "HVAC Service Technician"
     assert people["Jane Doe"]["department"] == "executive"
 
     csv = pipeline.export_people_csv(db, hiring_only=True)

@@ -119,7 +119,8 @@ def search_people(provider: SearchProvider, company: str, city: str | None = Non
     """X-ray search: query a search engine for public profiles at a company."""
     queries = [
         f'site:linkedin.com/in "{company}" (owner OR president OR CEO OR founder OR VP OR director)',
-        f'site:linkedin.com/in "{company}" (manager OR "head of" OR lead OR recruiter)',
+        f'site:linkedin.com/in "{company}" (manager OR "head of" OR lead OR superintendent)',
+        # Recruiting / talent people are excluded later; never searched for.
     ]
     if city:
         queries.append(f'site:linkedin.com/in "{company}" "{city.split(",")[0]}"')
@@ -139,7 +140,7 @@ def hiring_managers(people: list[dict], jobs: list[dict]) -> dict[int, list[dict
     """For each job id, the people most likely to own the hire, best first.
 
     Same department and more senior than the role wins, closest level first.
-    Small companies fall back to the owner / executives. Recruiters are added last.
+    Small companies fall back to the owner / executives. Recruiters are never suggested.
     """
     out: dict[int, list[dict]] = {}
     for j in jobs:
@@ -151,8 +152,7 @@ def hiring_managers(people: list[dict], jobs: list[dict]) -> dict[int, list[dict
         if not picks:
             execs = [p for p in people if p["department"] == "executive" or p["seniority"] == "c_level"]
             picks = sorted(execs, key=lambda p: -SENIORITY_RANK.get(p["seniority"], 1))[:1]
-        recruiters = [p for p in people if p["department"] == "hr" and p not in picks][:1]
-        out[j["id"]] = picks + recruiters
+        out[j["id"]] = picks
     return out
 
 

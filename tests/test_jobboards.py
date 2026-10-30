@@ -39,7 +39,7 @@ def test_all_boards_parse():
 def test_import_jobs(tmp_path):
     db = DB(str(tmp_path / "j.db"))
     res = pipeline.import_jobs(db, "greenhouse", "acme", domain="acme.com")
-    assert res == {"jobs": 1, "emails": 1, "phones": 1}
+    assert res == {"jobs": 1, "emails": 0, "phones": 1}  # recruiter.jane@ is never stored
     assert db.jobs()[0]["company_key"] == "acme.com"
     pipeline.import_jobs(db, "greenhouse", "acme", domain="acme.com")  # idempotent
     assert len(db.jobs()) == 1

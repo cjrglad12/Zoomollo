@@ -6,8 +6,8 @@ For each job, contacts are ranked by how strong the link is:
   3. contact in posting - an email/phone in the post that isn't tied to a known person
   4. likely hiring mgr  - closest more-senior person in the same department
   5. owner / exec       - small company, no department match
-  6. recruiter          - HR / talent people
-  7. careers inbox      - jobs@, careers@, hr@ style addresses and their phone lines
+
+Generic inboxes (careers@, info@...) and recruiting/staffing people are never used.
 """
 
 from __future__ import annotations
@@ -17,16 +17,16 @@ import re
 from bs4 import BeautifulSoup
 
 from .db import DB
+from .exclusions import is_excluded_email
 from .extract import extract_text
 from .orgmap import department, hiring_managers, seniority
 
 _REPORTS_TO = re.compile(
     r"\b(?:reports?|reporting)\s+(?:directly\s+)?(?:in\s+)?to\s+(?:the\s+|our\s+|a\s+)?"
     r"([A-Z][\w&/.' -]{2,60}?)(?=[.,;:()\n]|\s+(?:and|who|with|in|on|to|for)\b|$)", re.I)
-_HIRING_INBOX = re.compile(r"^(jobs?|careers?|hr|recruit\w*|talent|hiring|people|employment|resumes?|apply)\b")
 
 RANK = {"named in posting": 1, "reports to": 2, "contact in posting": 3, "likely hiring manager": 4,
-        "owner / exec": 5, "recruiter": 6, "careers inbox": 7}
+        "owner / exec": 5}
 
 
 def _plain(html: str) -> str:
@@ -59,7 +59,7 @@ def cross_reference(db: DB, company_id: int) -> int:
     for j in jobs:
         if j.get("description"):
             posted |= extract_text(_plain(j["description"]))[0]
-    for e in posted:
+    for e in posted - {e for e in posted if is_excluded_email(e)}:
         if db.conn.execute("SELECT 1 FROM people WHERE company_id = ? AND email = ? AND email_status = 'guessed'",
                            (company_id, e)).fetchone():
             mark_good(db, e)
@@ -67,9 +67,6 @@ def cross_reference(db: DB, company_id: int) -> int:
     people = [dict(p) for p in db.people(company_id)]
     by_email = {p["email"]: p for p in people if p["email"]}
     by_phone = {p["phone"]: p for p in people if p["phone"]}
-    inboxes = [r for r in db.conn.execute(
-        "SELECT value, type FROM contacts WHERE company_id = ? AND kind IN ('role', 'company')", (company_id,))
-        if r["type"] == "email" and _HIRING_INBOX.match(r["value"].split("@")[0])]
 
     db.conn.execute("DELETE FROM job_contacts WHERE job_id IN (SELECT id FROM jobs WHERE company_id = ?)",
                     (company_id,))
@@ -89,6 +86,8 @@ def cross_reference(db: DB, company_id: int) -> int:
         if text:
             emails, phones = extract_text(text)
             for e in emails:
+                if is_excluded_email(e):
+                    continue
                 p = by_email.get(e)
                 link(p["id"] if p else None, e, "named in posting" if p else "contact in posting")
             for ph in phones:
@@ -105,15 +104,11 @@ def cross_reference(db: DB, company_id: int) -> int:
 
         dept = department(job["title"])
         for p in hiring_managers(people, [job]).get(job["id"], []):
-            if p["department"] == "hr":
-                reason = "recruiter"
-            elif p["department"] == dept and dept != "other":
+            if p["department"] == dept and dept != "other":
                 reason = "likely hiring manager"
             else:
                 reason = "owner / exec"
             link(p["id"], None, reason)
-        for r in inboxes:
-            link(None, r["value"], "careers inbox")
 
         for (pid, value), reason in links.items():
             db.conn.execute("INSERT OR IGNORE INTO job_contacts (job_id, person_id, value, reason, rank) "

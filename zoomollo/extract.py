@@ -107,6 +107,7 @@ class PageResult:
     socials: set[str] = field(default_factory=set)
     links: list[str] = field(default_factory=list)
     title: str | None = None
+    description: str | None = None  # <meta name="description">
     ats: set[tuple[str, str]] = field(default_factory=set)
     jobs: list[dict] = field(default_factory=list)
 
@@ -134,8 +135,8 @@ def clean_email(raw: str) -> str | None:
 
 
 def is_role_email(email: str) -> bool:
-    local = email.split("@", 1)[0].lower()
-    return re.sub(r"[^a-z]", "", local) in ROLE_LOCALPARTS
+    from .exclusions import is_generic_email
+    return is_generic_email(email)
 
 
 def find_emails(text: str) -> set[str]:
@@ -298,6 +299,9 @@ def extract_page(html: str, url: str, region: str = "US") -> PageResult:
         res.title = soup.title.string.strip()[:200]
 
     res.people.extend(_jsonld_people(soup))
+    meta = soup.find("meta", attrs={"name": "description"}) or soup.find("meta", attrs={"property": "og:description"})
+    if meta and meta.get("content"):
+        res.description = meta["content"].strip()[:500]
     res.ats = find_ats(html)
     res.jobs = _jsonld_jobs(soup, url)
     known_jobs = {j["url"] for j in res.jobs}

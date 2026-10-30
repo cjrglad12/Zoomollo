@@ -95,6 +95,12 @@ CREATE TABLE IF NOT EXISTS job_contacts (      -- contacts cross-referenced to a
     UNIQUE (job_id, person_id, value)
 );
 CREATE INDEX IF NOT EXISTS job_contacts_job ON job_contacts(job_id);
+CREATE TABLE IF NOT EXISTS blocked_companies (  -- staffing / recruiting firms: never stored again
+    key TEXT PRIMARY KEY,                      -- company key or domain
+    name TEXT,
+    reason TEXT,
+    added_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS contacts_company ON contacts(company_id);
 CREATE INDEX IF NOT EXISTS jobs_company ON jobs(company_id);
 """
@@ -133,6 +139,56 @@ class DB:
             for col, typ in cols.items():
                 if col not in have:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+        self.conn.commit()
+        if self.conn.execute("PRAGMA user_version").fetchone()[0] < 2:
+            self.purge_excluded()
+            self.conn.execute("PRAGMA user_version = 2")
+            self.conn.commit()
+
+    # --- exclusions (see exclusions.py) ----------------------------------------
+    def purge_excluded(self) -> dict:
+        """Remove generic inboxes, recruiting people and staffing companies already saved."""
+        from .exclusions import is_excluded_email, is_recruiting_title, staffing_signal
+        out = {"emails": 0, "people": 0, "companies": 0}
+        for r in self.conn.execute("SELECT id, type, value, title FROM contacts").fetchall():
+            if (r["type"] == "email" and is_excluded_email(r["value"])) or is_recruiting_title(r["title"]):
+                self.conn.execute("DELETE FROM contacts WHERE id = ?", (r["id"],))
+                out["emails"] += 1
+        for r in self.conn.execute("SELECT id, title, email FROM people").fetchall():
+            if is_recruiting_title(r["title"]):
+                self.conn.execute("DELETE FROM people WHERE id = ?", (r["id"],))
+                if r["email"]:
+                    self.conn.execute("DELETE FROM contacts WHERE value = ?", (r["email"],))
+                out["people"] += 1
+            elif r["email"] and is_excluded_email(r["email"]):
+                self.conn.execute("UPDATE people SET email = NULL, email_status = NULL WHERE id = ?", (r["id"],))
+        self.conn.execute("DELETE FROM job_contacts WHERE reason IN ('careers inbox', 'recruiter')")
+        for r in self.conn.execute("SELECT id, name, domain FROM companies").fetchall():
+            why = staffing_signal(r["name"], domain=r["domain"])
+            if why:
+                self.block_company(r["id"], why)
+                out["companies"] += 1
+        self.conn.commit()
+        return out
+
+    def is_blocked(self, *keys: str | None) -> bool:
+        keys = [k.lower() for k in keys if k]
+        if not keys:
+            return False
+        q = f"SELECT 1 FROM blocked_companies WHERE key IN ({','.join('?' * len(keys))})"
+        return self.conn.execute(q, keys).fetchone() is not None
+
+    def block_company(self, company_id: int, reason: str) -> None:
+        """Record a staffing/recruiting company and delete everything saved for it."""
+        row = self.company_row(company_id)
+        if not row:
+            return
+        for k in {row["key"], row["domain"]} - {None}:
+            self.conn.execute("INSERT OR REPLACE INTO blocked_companies (key, name, reason, added_at) "
+                              "VALUES (?, ?, ?, ?)", (k.lower(), row["name"], reason, now()))
+        for table in ("contacts", "socials", "jobs", "people", "pattern_feedback"):
+            self.conn.execute(f"DELETE FROM {table} WHERE company_id = ?", (company_id,))
+        self.conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
         self.conn.commit()
 
     # --- companies ---------------------------------------------------------
@@ -182,8 +238,11 @@ class DB:
                     name: str | None = None, title: str | None = None,
                     source_url: str | None = None) -> bool:
         """Insert or refresh a contact. Returns False if suppressed."""
+        from .exclusions import is_excluded_email, is_recruiting_title
         value = value.lower() if type_ == "email" else value
-        if self.is_suppressed(value) or (type_ == "email" and self.is_bad_email(value)):
+        if self.is_suppressed(value) or is_recruiting_title(title):
+            return False
+        if type_ == "email" and (self.is_bad_email(value) or is_excluded_email(value)):
             return False
         t = now()
         self.conn.execute(
@@ -201,15 +260,22 @@ class DB:
 
     def add_person(self, company_id: int, name: str, title: str | None = None, **fields) -> int | None:
         """Insert or enrich a person. Existing values win except blanks get filled."""
+        from .exclusions import is_excluded_email, is_recruiting_title
         from .orgmap import department, seniority
         name = " ".join(name.split())
         key = name.lower()
         email = fields.get("email")
-        if email and (self.is_suppressed(email) or self.is_bad_email(email)):
+        if email and (self.is_suppressed(email) or self.is_bad_email(email) or is_excluded_email(email)):
             email = None
             fields.pop("email", None)
         row = self.conn.execute("SELECT * FROM people WHERE company_id = ? AND name_key = ?",
                                 (company_id, key)).fetchone()
+        if is_recruiting_title(title):  # never keep recruiting / talent-acquisition people
+            if row:
+                self.conn.execute("DELETE FROM people WHERE id = ?", (row["id"],))
+                if row["email"]:
+                    self.conn.execute("DELETE FROM contacts WHERE value = ?", (row["email"],))
+            return None
         if row is None:
             cur = self.conn.execute(
                 "INSERT INTO people (company_id, name, name_key, title, department, seniority, email, "

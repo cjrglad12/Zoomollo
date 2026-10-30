@@ -116,6 +116,9 @@ PEOPLE = EMAIL_MACRO + """<form class="bar"><input type="search" name="q" value=
 {% else %}<tr><td colspan="7">No people yet. Start on the <a href="{{ url_for('find') }}">Prospect</a> tab.</td></tr>{% endfor %}</table></div>"""
 
 COMPANY = EMAIL_MACRO + """<h2>{{ co.name or co.key }}</h2>
+<form class="fb" method="post" action="{{ url_for('block', cid=co.id) }}" style="float:right"
+ onsubmit="return confirm('Block this company as staffing/recruiting? Everything saved for it is deleted.')">
+<button class="no">Block (staffing / recruiting)</button></form>
 <div class="sub">{% if co.domain %}<a href="https://{{ co.domain }}" target="_blank" rel="noopener">{{ co.domain }}</a> · {% endif %}
 {% if co.industry %}{{ co.industry }} · {% endif %}{% if co.city %}{{ co.city }} · {% endif %}
 {% if co.phone %}<span class="v">{{ co.phone }}</span> · {% endif %}{% if co.address %}{{ co.address }} · {% endif %}
@@ -152,7 +155,7 @@ COMPANIES = """<form class="bar"><input type="search" name="q" value="{{ q }}" p
 
 CONTACTS = """<form class="bar"><input type="search" name="q" value="{{ q }}" placeholder="Search name, email, title, company…">
 <select name="type"><option value="">Emails + phones</option>{% for t in ['email','phone'] %}<option {{ 'selected' if t==type_ }}>{{ t }}</option>{% endfor %}</select>
-<select name="kind"><option value="">Any kind</option>{% for k in ['person','role','company','guessed'] %}<option {{ 'selected' if k==kind }}>{{ k }}</option>{% endfor %}</select>
+<select name="kind"><option value="">Any kind</option>{% for k in ['person','company','guessed'] %}<option {{ 'selected' if k==kind }}>{{ k }}</option>{% endfor %}</select>
 <button>Search</button><a class="btn" href="{{ url_for('export', q=q, type=type_, kind=kind) }}">Export CSV</a></form>
 <div class="wrap"><table><tr><th>Company</th><th>Name</th><th>Title</th><th>Contact</th><th>Kind</th><th>Source</th></tr>
 {% for r in rows %}<tr><td><a href="{{ url_for('company', cid=r.company_id) }}">{{ r.company_name or r.company_key or '' }}</a></td><td>{{ r.name or '' }}</td><td>{{ r.title or '' }}</td>
@@ -187,7 +190,8 @@ def create_app(db_path: str | None = None) -> Flask:
                     r = pipeline.prospect(db, opts["what"], opts["where"], opts.get("limit", 25),
                                           provider=get_provider(), progress=log.appendleft)
                     log.appendleft(f"✓ done: {r['companies']} companies, {r['people']} people, "
-                                   f"{r['hiring_managers']} hiring managers, {r['jobs']} jobs")
+                                   f"{r['hiring_managers']} hiring managers, {r['jobs']} jobs "
+                                   f"({r['skipped_staffing']} staffing/recruiting firms skipped)")
                 elif action == "crawl":
                     log.appendleft(f"crawling {item}…")
                     r = pipeline.crawl_company(db, item, max_pages=40)
@@ -266,7 +270,7 @@ def create_app(db_path: str | None = None) -> Flask:
         for p in ppl:
             groups.setdefault(p["department"] or "other", []).append(p)
         org = sorted(groups.items(), key=lambda kv: list(DEPT_LABELS).index(kv[0]) if kv[0] in DEPT_LABELS else 99)
-        contacts = [r for r in db.search(limit=10_000) if r["company_id"] == cid and r["kind"] in ("role", "company")]
+        contacts = [r for r in db.search(limit=10_000) if r["company_id"] == cid and r["kind"] == "company"]
         matches = {j["id"]: db.job_contacts(j["id"]) for j in jobs}
         return render("companies", COMPANY, co=co, people=ppl, org=org, jobs=jobs,
                       matches=matches, contacts=contacts)
@@ -314,6 +318,11 @@ def create_app(db_path: str | None = None) -> Flask:
             emailcheck.auto_verify(db, pid, v)
         pipeline.assign_hiring_managers(db, row["company_id"])
         return redirect(request.referrer or url_for("people"))
+
+    @app.post("/company/<int:cid>/block")
+    def block(cid: int):
+        DB(db_path).block_company(cid, "blocked by user")
+        return redirect(url_for("companies"))
 
     @app.get("/hiring.csv")
     def export_hiring():

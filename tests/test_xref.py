@@ -31,10 +31,10 @@ def test_cross_reference(tmp_path):
 
     m1 = matches("1")
     assert m1[0] == ("reports to", "Sara Lane")
-    assert ("contact in posting", "+15125550134") in m1 and ("recruiter", "Rae Kim") in m1
-    assert ("careers inbox", "careers@acme.com") in m1 and not any(v == "info@acme.com" for _, v in m1)
+    assert ("contact in posting", "+15125550134") in m1
+    assert not any(v in ("Rae Kim", "careers@acme.com", "info@acme.com") for _, v in m1)
     m2 = matches("2")
-    assert m2[0] == ("named in posting", "Tom Ford") and ("contact in posting", "hiring@acme.com") in m2
+    assert m2 == [("named in posting", "Tom Ford")]  # hiring@ in the post is ignored
     assert matches("3")[0] == ("owner / exec", "Owen Hart")   # no finance leader known
     rows = hiring_rows(db, "technician")
     assert {r["job_title"] for r in rows} == {"HVAC Technician"}

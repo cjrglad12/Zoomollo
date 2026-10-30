@@ -4,10 +4,10 @@ from zoomollo.db import DB
 def test_crawl_end_to_end(site, tmp_path):
     db = DB(str(tmp_path / "t.db"))
     res = pipeline.crawl_company(db, "acme.test", max_pages=10, delay=0)
-    assert res["emails"] == 3 and res["phones"] == 1
+    assert res["emails"] == 2 and res["phones"] == 1  # hr@ is a generic inbox: never stored
     rows = {r["value"]: r for r in db.search()}
     assert rows["jane.doe@acme.test"]["name"] == "Jane Doe"
-    assert rows["hr@acme.test"]["kind"] == "role"
+    assert "hr@acme.test" not in rows
     co = db.companies()[0]
     assert co["email_pattern"] == "{first}.{last}" and co["name"] == "Acme Inc"
 

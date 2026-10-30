@@ -75,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("search", help="Search saved contacts")
     s.add_argument("query", nargs="?", default="")
     s.add_argument("--type", choices=["email", "phone"])
-    s.add_argument("--kind", choices=["person", "role", "company", "guessed"])
+    s.add_argument("--kind", choices=["person", "company", "guessed"])
     s.add_argument("--limit", type=int, default=100)
 
     sub.add_parser("companies", help="List companies and counts")
@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("-o", "--out", default="-")
     e.add_argument("query", nargs="?", default="")
     e.add_argument("--type", choices=["email", "phone"])
-    e.add_argument("--kind", choices=["person", "role", "company", "guessed"])
+    e.add_argument("--kind", choices=["person", "company", "guessed"])
     e.add_argument("--people", action="store_true", help="Export people (org map) instead of raw contacts")
     e.add_argument("--hiring", action="store_true", help="With --people: hiring managers only")
     e.add_argument("--jobs", action="store_true", help="Export open roles x matched contacts")
@@ -93,6 +93,10 @@ def main(argv: list[str] | None = None) -> int:
     x = sub.add_parser("suppress", help="Opt someone out: deletes and blocks an email, phone or @domain")
     x.add_argument("value")
     x.add_argument("--reason", default="opt-out")
+
+    bl = sub.add_parser("block", help="Block a company (e.g. a staffing/recruiting firm) and delete its data")
+    bl.add_argument("companies", nargs="+", help="Domain or company key")
+    sub.add_parser("purge", help="Remove generic inboxes, recruiting people and staffing firms already saved")
 
     lp = sub.add_parser("loxo-push", help="Push named contacts to Loxo (dry run unless --send)")
     lp.add_argument("--send", action="store_true")
@@ -162,6 +166,22 @@ def main(argv: list[str] | None = None) -> int:
         for p in rows:
             email, status = emailcheck.auto_verify(db, p["id"], verifier)
             print(f"{p['name']} ({p['company_name']}): {email or '-'} [{status}]")
+
+    elif a.cmd == "block":
+        from .crawler import normalize_domain
+        for k in a.companies:
+            row = db.conn.execute("SELECT id FROM companies WHERE key = ? OR domain = ?",
+                                  (k, normalize_domain(k))).fetchone()
+            if row:
+                db.block_company(row["id"], "blocked by user")
+            else:
+                db.conn.execute("INSERT OR REPLACE INTO blocked_companies (key, reason, added_at) "
+                                "VALUES (?, 'blocked by user', datetime('now'))", (normalize_domain(k),))
+                db.commit()
+            print(f"Blocked {k}")
+
+    elif a.cmd == "purge":
+        print(json.dumps(db.purge_excluded(), indent=2))
 
     elif a.cmd == "crawl":
         domains = []

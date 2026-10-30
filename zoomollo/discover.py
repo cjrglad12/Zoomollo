@@ -19,6 +19,7 @@ import requests
 from .crawler import USER_AGENT, normalize_domain
 from .extract import ATS_RE, find_ats
 from .orgmap import domain_of, mentions, norm_company
+from .exclusions import staffing_signal
 from .search import SearchProvider
 
 log = logging.getLogger(__name__)
@@ -37,7 +38,6 @@ SYNONYMS = {
     "insurance": ["insurance"], "financial": ["financial", "financial_advisor"],
     "software": ["it", "software", "company"], "tech": ["it", "software"], "it ": ["it"],
     "marketing": ["advertising_agency", "marketing"], "advertising": ["advertising_agency"],
-    "staffing": ["employment_agency"], "recruit": ["employment_agency"],
     "architect": ["architect"], "engineering": ["engineer"], "dental": ["dentist"],
     "dentist": ["dentist"], "medical": ["doctors", "clinic"], "clinic": ["clinic"],
     "veterinar": ["veterinary"], "logistics": ["logistics"], "moving": ["moving_company"],
@@ -140,7 +140,7 @@ def osm_companies(what: str, where: str, limit: int = 200) -> list[Candidate]:
     for el in data.get("elements", []):
         t = el.get("tags", {})
         name = t.get("name")
-        if not name:
+        if not name or t.get("office") == "employment_agency" or staffing_signal(name, t.get("description")):
             continue
         site = t.get("website") or t.get("contact:website") or t.get("url")
         domain = normalize_domain(site) if site else None
@@ -181,6 +181,8 @@ def search_companies(provider: SearchProvider, what: str, where: str, pages: int
                 continue
             domain = domain_of(r.url)
             if not is_company_domain(domain) or _LISTICLE.search(r.title):
+                continue
+            if staffing_signal(r.title, r.snippet, domain=domain):
                 continue
             c = out.setdefault(domain, Candidate(name=_name_from_title(r.title), domain=domain))
             c.sources.add(provider.name)

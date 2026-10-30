@@ -13,6 +13,7 @@ import requests
 
 from .crawler import Crawler, normalize_domain
 from .db import DB, now
+from .exclusions import is_staffing_domain, staffing_signal
 from .extract import is_role_email, looks_like_name, normalize_phone, social_kind
 from .jobboards import fetch_jobs
 from .orgmap import search_people
@@ -40,15 +41,25 @@ def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
                   region: str = "US", progress: Progress | None = None,
                   import_ats: bool = True) -> dict:
     domain = normalize_domain(domain)
+    found = {"pages": 0, "emails": 0, "phones": 0, "people": 0, "jobs": 0, "blocked": None}
+    if db.is_blocked(domain) or is_staffing_domain(domain):
+        found["blocked"] = "staffing / recruiting company"
+        return found
     company_id = db.company(domain, domain=domain)
     crawler = Crawler(max_pages=max_pages, delay=delay, region=region)
-    found = {"pages": 0, "emails": 0, "phones": 0, "people": 0, "jobs": 0}
     ats: set[tuple[str, str]] = set()
 
     for page in crawler.crawl(domain):
         found["pages"] += 1
         if progress:
             progress(f"{page.url}: {len(page.emails)} emails, {len(page.phones)} phones")
+        if urlparse(page.url).path in ("", "/", "/about", "/about-us"):
+            row = db.company_row(company_id)
+            why = staffing_signal(page.title, page.description, row["name"] if row else None, domain=domain)
+            if why:  # a staffing / recruiting firm: drop everything and never come back
+                db.block_company(company_id, why)
+                found["blocked"] = why
+                return found
         if page.title and urlparse(page.url).path in ("", "/"):
             row = db.company_row(company_id)
             if not row["name"] or row["name"] == row["key"]:
@@ -205,7 +216,11 @@ def prospect(db: DB, what: str, where: str, limit: int = 25, crawl_pages: int = 
     say(f"Found {len(cands)} companies")
     totals = {"companies": 0, "people": 0, "hiring_managers": 0, "jobs": 0, "emails": 0, "phones": 0}
 
+    totals["skipped_staffing"] = 0
     for i, c in enumerate(cands, 1):
+        if db.is_blocked(c.key, c.domain) or staffing_signal(c.name, domain=c.domain):
+            totals["skipped_staffing"] += 1
+            continue
         cid = db.company(c.key, domain=c.domain, name=c.name)
         db.update_company(cid, city=where, industry=what, source=",".join(sorted(c.sources)) or None,
                           **{k: v for k, v in {"address": c.address, "phone": c.phone}.items() if v})
@@ -220,6 +235,11 @@ def prospect(db: DB, what: str, where: str, limit: int = 25, crawl_pages: int = 
         if c.domain:
             try:
                 r = crawl_company(db, c.domain, max_pages=crawl_pages, delay=1.0)
+                if r.get("blocked"):
+                    say(f"{label}: skipped, staffing/recruiting company ({r['blocked']})")
+                    totals["companies"] -= 1
+                    totals["skipped_staffing"] += 1
+                    continue
                 totals["emails"] += r["emails"]
                 totals["phones"] += r["phones"]
                 totals["jobs"] += r["jobs"]

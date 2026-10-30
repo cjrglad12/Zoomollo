@@ -42,6 +42,8 @@ zoomollo guess "Jane Doe" acme.com          # best-guess work email
 zoomollo search "vp sales"                  # search saved contacts
 zoomollo export -o contacts.csv --kind person
 zoomollo suppress jane@acme.com             # opt-out: delete + never store again
+zoomollo block staffco.com                  # block a staffing/recruiting firm the filters missed
+zoomollo purge                              # re-apply the exclusion rules to saved data
 zoomollo loxo-push                          # dry run; add --send to push for real
 ```
 
@@ -62,8 +64,6 @@ The database is `./zoomollo.db` unless you pass `--db` or set `ZOOMOLLO_DB`.
    | contact in posting | an email/phone in the post not tied to a known person |
    | likely hiring manager | closest more-senior person in the same department |
    | owner / exec | small company with no matching department leader |
-   | recruiter | HR / talent people |
-   | careers inbox | jobs@, careers@, hr@ style addresses |
 6. **Emails.** Real addresses found on the site or in job posts are matched to people. The company's email format is learned from them and used to guess the rest (marked `guessed`).
 
 ## Fixing wrong email guesses
@@ -89,7 +89,16 @@ Direct phone numbers for individuals are only found when a company publishes the
 | Job boards | Official public JSON feeds for Greenhouse, Lever, Ashby and Workable | Open roles (hiring signals) plus recruiter emails and phones in job posts |
 | Email format | Learned from named emails found on a company's site (e.g. `first.last`, 90% of examples) | Guessed addresses for any name at that company, labelled `guessed` |
 
-Every contact is labelled by kind: `person` (seen with a name), `role` (info@, careers@…), `company` (main phone lines) or `guessed`, and stores the page it was found on.
+Every contact is labelled by kind: `person` (seen with a name), `company` (main phone lines) or `guessed`, and stores the page it was found on.
+
+## Always excluded
+
+Rules live in `zoomollo/exclusions.py`; edit the lists there to change them.
+
+- **Generic inboxes, ever.** info@, careers@, jobs@, hr@, sales@, hello@, office@, support@ and ~150 similar (including variants like `jobs.austin@` or `info2@`). They're never saved, never matched to a role, never guessed, and never pushed to Loxo.
+- **Recruiting and staffing people.** Recruiters, talent acquisition, sourcers, staffing titles. They're never saved (and removed if a title is learned later) and never suggested for a role. HR managers/directors are kept in the org map but are not matched to roles unless the job is in HR.
+- **Recruiting and staffing companies.** Agencies, executive search and temp firms are dropped during discovery (map tags, names, search snippets, a list of ~70 big firms' domains). If one gets through, its homepage title/description gives it away during the crawl: the company and everything saved for it is deleted and its domain is blocked for good. Use the *Block* button on a company page or `zoomollo block` for any the filters miss.
+- Existing databases are cleaned automatically the next time they're opened.
 
 ## Loxo
 
