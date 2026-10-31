@@ -168,7 +168,7 @@ window.zmApply();
 FIND = """<div class="grid">
 <form class="card big" method="post" action="{{ url_for('enqueue') }}"><h3>Prospect</h3>
 <p>Describe the companies and the city. Zoomollo finds them, crawls their sites and job boards, maps their people and flags likely hiring managers.</p>
-{% if not provider %}<div class="warn">No search API set, so only OpenStreetMap and company websites are used. Set BRAVE_API_KEY (free tier), SERPAPI_KEY or SEARXNG_URL to find more companies and people.</div>{% endif %}
+{% if not provider %}<div class="warn">No search key yet, so only OpenStreetMap and company websites are used. Paste a Brave Search API key into <b>zoomollo-settings.txt</b> (in the Zoomollo folder) next to BRAVE_API_KEY=, then close and restart Zoomollo, to find many more companies and people.</div>{% endif %}
 <input type="hidden" name="action" value="prospect">
 <div class="row"><input name="what" placeholder="What they do: commercial HVAC, law firms, SaaS…" required>
 <input name="where" placeholder="City: Austin, TX" required>

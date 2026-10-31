@@ -107,7 +107,10 @@ def main(argv: list[str] | None = None) -> int:
     sv = sub.add_parser("serve", help="Run the web UI")
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8080)
+    sv.add_argument("--open", action="store_true", help="Open the web UI in your browser")
 
+    from .settings import load_settings
+    load_settings()
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO if a.verbose else logging.WARNING, format="%(message)s")
     db = DB(a.db)
@@ -251,6 +254,16 @@ def main(argv: list[str] | None = None) -> int:
 
     elif a.cmd == "serve":
         from .web import create_app
+        url = f"http://{'127.0.0.1' if a.host in ('0.0.0.0', '127.0.0.1') else a.host}:{a.port}"
+        print(f"\nZoomollo is running at {url}\nLeave this window open while you use it. "
+              f"Close it (or press Ctrl+C) to stop.\n")
+        if a.open:
+            import threading
+            import webbrowser
+            threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+        import flask.cli
+        logging.getLogger("werkzeug").setLevel(logging.ERROR)  # quiet per-request logs
+        flask.cli.show_server_banner = lambda *args, **kw: None
         create_app(db.path).run(host=a.host, port=a.port)
 
     return 0

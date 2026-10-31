@@ -4,10 +4,14 @@ Self-hosted contact discovery: a do-it-yourself ZoomInfo/Apollo. Tell it what ki
 
 ## Quick start
 
-```bash
-pip install -e .            # Python 3.10+
-zoomollo serve              # web UI at http://127.0.0.1:8080
-```
+1. **Download:** on GitHub, Code → Download ZIP, then unzip it.
+2. **Start it:** double-click **`start.command`** (Mac) or **`start.bat`** (Windows). The first run installs everything (a minute or two) and opens Zoomollo in your browser. If Python 3.10+ is missing, it opens the download page; install it (on Windows tick "Add python.exe to PATH") and double-click again.
+   - Mac says it can't open the file? Right-click it → Open → Open. (On newer macOS: System Settings → Privacy & Security → Open Anyway.)
+3. **Add your keys:** open **`zoomollo-settings.txt`** in the Zoomollo folder (created on first run), paste your Brave Search API key after `BRAVE_API_KEY=`, save, then close the Zoomollo window and start it again.
+
+Keep the black Zoomollo window open while you use it; close it to stop. Your data stays in `zoomollo.db` in the same folder.
+
+Prefer the command line? `pip install -e .` then `zoomollo serve --open`.
 
 Open the **Prospect** tab, type what the companies do and the city, and hit *Find companies*.
 
@@ -15,7 +19,7 @@ The **Theme** (Light / Auto / Dark) and **Layout** (PC / Auto / Mobile) switches
 
 ### Turn on web search (recommended)
 
-Without a search API, companies come only from OpenStreetMap and people only from company websites. With one, you get many more companies and people. Set one of these before `zoomollo serve`:
+Without a search API, companies come only from OpenStreetMap and people only from company websites. With one, you get many more companies and people. Put one of these in `zoomollo-settings.txt` (or set it as an environment variable):
 
 ```bash
 export BRAVE_API_KEY=...      # https://brave.com/search/api/ (cheapest; has a free allowance)
