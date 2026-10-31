@@ -95,6 +95,35 @@ CREATE TABLE IF NOT EXISTS job_contacts (      -- contacts cross-referenced to a
     UNIQUE (job_id, person_id, value)
 );
 CREATE INDEX IF NOT EXISTS job_contacts_job ON job_contacts(job_id);
+CREATE TABLE IF NOT EXISTS data_sources (       -- public data files used on every prospect run
+    id INTEGER PRIMARY KEY,
+    url TEXT UNIQUE NOT NULL,                  -- link or file path
+    label TEXT,
+    added_at TEXT NOT NULL,
+    last_used TEXT
+);
+CREATE TABLE IF NOT EXISTS templates (          -- text message templates
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS messages (           -- texts sent from your own phone
+    id INTEGER PRIMARY KEY,
+    person_id INTEGER REFERENCES people(id) ON DELETE SET NULL,
+    company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+    phone TEXT NOT NULL,
+    channel TEXT NOT NULL,                     -- sms (opened texting app) | phone (sent via QR / copy)
+    template_id INTEGER REFERENCES templates(id) ON DELETE SET NULL,
+    body TEXT NOT NULL,
+    sent_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS messages_phone ON messages(phone);
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 CREATE TABLE IF NOT EXISTS blocked_companies (  -- staffing / recruiting firms: never stored again
     key TEXT PRIMARY KEY,                      -- company key or domain
     name TEXT,
@@ -170,6 +199,51 @@ class DB:
                 out["companies"] += 1
         self.conn.commit()
         return out
+
+    # --- templates & settings ---------------------------------------------------
+    def save_template(self, name: str, body: str, template_id: int | None = None) -> int:
+        if template_id:
+            self.conn.execute("UPDATE templates SET name = ?, body = ?, updated_at = ? WHERE id = ?",
+                              (name, body, now(), template_id))
+        else:
+            template_id = self.conn.execute(
+                "INSERT INTO templates (name, body, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                (name, body, now(), now())).lastrowid
+        self.conn.commit()
+        return template_id
+
+    def templates(self) -> list[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM templates ORDER BY id").fetchall()
+
+    def template(self, template_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM templates WHERE id = ?", (template_id,)).fetchone()
+
+    def delete_template(self, template_id: int) -> None:
+        self.conn.execute("DELETE FROM templates WHERE id = ?", (template_id,))
+        self.conn.commit()
+
+    def get_setting(self, key: str) -> str | None:
+        row = self.conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        self.conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", (key, value.strip()))
+        self.conn.commit()
+
+    def sources(self) -> list[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM data_sources ORDER BY id").fetchall()
+
+    def add_source(self, url: str, label: str | None = None) -> int:
+        from urllib.parse import urlparse
+        label = label or urlparse(url).netloc or url.rsplit("/", 1)[-1]
+        self.conn.execute("INSERT INTO data_sources (url, label, added_at) VALUES (?, ?, ?) "
+                          "ON CONFLICT(url) DO UPDATE SET label = excluded.label", (url.strip(), label, now()))
+        self.conn.commit()
+        return self.conn.execute("SELECT id FROM data_sources WHERE url = ?", (url.strip(),)).fetchone()[0]
+
+    def remove_source(self, source_id: int) -> None:
+        self.conn.execute("DELETE FROM data_sources WHERE id = ?", (source_id,))
+        self.conn.commit()
 
     def is_blocked(self, *keys: str | None) -> bool:
         keys = [k.lower() for k in keys if k]

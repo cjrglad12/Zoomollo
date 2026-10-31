@@ -96,6 +96,7 @@ class Person:
     title: str | None = None
     email: str | None = None
     phone: str | None = None
+    linkedin: str | None = None
 
 
 @dataclass
@@ -108,8 +109,10 @@ class PageResult:
     links: list[str] = field(default_factory=list)
     title: str | None = None
     description: str | None = None  # <meta name="description">
+    text: str = ""                   # visible text (first 20k characters)
     ats: set[tuple[str, str]] = field(default_factory=set)
     jobs: list[dict] = field(default_factory=list)
+    link_text: dict[str, str] = field(default_factory=dict)  # url -> anchor text
 
 
 def deobfuscate(text: str) -> str:
@@ -192,8 +195,11 @@ def _jsonld_people(soup: BeautifulSoup) -> list[Person]:
                 phone = normalize_phone(str(node["telephone"])) if node.get("telephone") else None
                 name = node.get("name") if isinstance(node.get("name"), str) else None
                 title = node.get("jobTitle") if isinstance(node.get("jobTitle"), str) else None
+                same = node.get("sameAs")
+                same = same if isinstance(same, list) else [same]
+                li = next((u for u in same if isinstance(u, str) and "linkedin.com/in/" in u), None)
                 if name or email:
-                    people.append(Person(name=name, title=title, email=email, phone=phone))
+                    people.append(Person(name=name, title=title, email=email, phone=phone, linkedin=li))
             for v in node.values():
                 if isinstance(v, (list, dict)):
                     walk(v)
@@ -270,6 +276,22 @@ def _job_links(soup: BeautifulSoup, page_url: str) -> list[dict]:
     return jobs
 
 
+def _card_linkedin(el) -> str | None:
+    """A LinkedIn profile link on the same team card as this name (the nearest
+    container holding exactly one such link)."""
+    node = el
+    for _ in range(4):
+        node = node.parent
+        if node is None or len(node.find_all(el.name)) > 1:
+            return None  # reached a container holding several people's cards
+        links = {a["href"] for a in node.find_all("a", href=True) if "linkedin.com/in/" in a["href"]}
+        if len(links) == 1:
+            return links.pop()
+        if len(links) > 1:
+            return None
+    return None
+
+
 def _team_members(soup: BeautifulSoup) -> list[Person]:
     """Team / leadership cards: a short name line followed closely by a title line."""
     people, seen = [], set()
@@ -288,7 +310,7 @@ def _team_members(soup: BeautifulSoup) -> list[Person]:
                 title = cand
         if title and name.lower() not in seen:
             seen.add(name.lower())
-            people.append(Person(name=name, title=title))
+            people.append(Person(name=name, title=title, linkedin=_card_linkedin(el)))
     return people
 
 
@@ -327,6 +349,8 @@ def extract_page(html: str, url: str, region: str = "US") -> PageResult:
                 res.socials.add(absolute.rstrip("/"))
             else:
                 res.links.append(absolute)
+                if absolute not in res.link_text:
+                    res.link_text[absolute] = a.get_text(" ", strip=True)[:120]
 
     for tag in soup(["script", "style", "noscript", "svg"]):
         tag.decompose()
@@ -335,6 +359,7 @@ def extract_page(html: str, url: str, region: str = "US") -> PageResult:
         if p.name.lower() not in known:
             res.people.append(p)
     text = soup.get_text(" ", strip=True)
+    res.text = text[:20000]
     res.emails |= find_emails(text)
     res.phones |= find_phones(text, region)
     for p in res.people:

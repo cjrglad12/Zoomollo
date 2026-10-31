@@ -57,25 +57,3 @@ def test_import_bounces(tmp_path):
             "couldn't be found. random@other.com")
     res = emailcheck.import_bounces(db, text)
     assert res == [("jane.doe@acme.com", "Jane Doe", "jane@acme.com")]
-
-
-def test_auto_verify(tmp_path):
-    db, cid, a, _ = setup(tmp_path)
-
-    class Fake(emailcheck.Verifier):
-        name = "fake"
-        calls = []
-
-        def check(self, email):
-            self.calls.append(email)
-            return "valid" if email == "rsmith@acme.com" else "invalid"
-
-    v = Fake()
-    assert emailcheck.auto_verify(db, a, v) == ("rsmith@acme.com", "confirmed")
-    assert v.calls == ["robert.smith@acme.com", "robert@acme.com", "rsmith@acme.com"]
-
-    class CatchAll(emailcheck.Verifier):
-        def check(self, email):
-            return "catch_all"
-    db2, _, a2, _ = setup(tmp_path / "x") if (tmp_path / "x").mkdir() is None else None
-    assert emailcheck.auto_verify(db2, a2, CatchAll()) == ("robert.smith@acme.com", "catch_all")

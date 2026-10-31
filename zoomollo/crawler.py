@@ -129,31 +129,47 @@ class Crawler:
                 urls += locs
         return urls[:limit]
 
-    def crawl(self, domain_or_url: str) -> Iterator[PageResult]:
+    def crawl(self, domain_or_url: str, seed_paths: list[str] | None = None,
+              scorer=None, include_subdomains: bool = False, keep_query: bool = False,
+              use_sitemap: bool = True) -> Iterator[PageResult]:
+        """Crawl one site, best pages first.
+
+        scorer(url, link_text) -> extra priority, for custom crawls such as
+        member directories. include_subdomains also follows e.g.
+        business.chamber.org from chamber.org. keep_query keeps ?page=2 style links.
+        """
         domain = normalize_domain(domain_or_url)
         base = f"https://{domain}"
         queue: list[tuple[int, int, str]] = []
         seen: set[str] = set()
         counter = 0
 
-        def push(url: str) -> None:
+        def same_site(host: str) -> bool:
+            return host == domain or (include_subdomains and host.endswith("." + domain))
+
+        def push(url: str, text: str = "") -> None:
             nonlocal counter
-            url = url.split("#")[0].split("?")[0].rstrip("/") or url
-            if url in seen or url.lower().endswith(SKIP_EXT):
+            url = url.split("#")[0]
+            if not keep_query:
+                url = url.split("?")[0]
+            url = url.rstrip("/") or url
+            if url in seen or url.lower().split("?")[0].endswith(SKIP_EXT):
                 return
             host = urlparse(url).netloc.lower().removeprefix("www.")
-            if host != domain:
+            if not same_site(host):
                 return
             seen.add(url)
             counter += 1
-            heapq.heappush(queue, (-score(url), counter, url))
+            pri = score(url) + (scorer(url, text) if scorer else 0)
+            heapq.heappush(queue, (-pri, counter, url))
 
-        for path in SEED_PATHS:
+        for path in (SEED_PATHS if seed_paths is None else seed_paths):
             push(base + path)
         # Sitemaps list pages the menus don't link to (bios, individual job posts).
-        for url in self.sitemap_urls(base):
-            if score(url) > 0:
-                push(url)
+        if use_sitemap:
+            for url in self.sitemap_urls(base):
+                if score(url) > 0 or (scorer and scorer(url, "") > 0):
+                    push(url)
 
         fetched = 0
         while queue and fetched < self.max_pages:
@@ -170,4 +186,4 @@ class Crawler:
             page = extract_page(html, final_url, self.region)
             yield page
             for link in page.links:
-                push(link)
+                push(link, page.link_text.get(link, ""))
