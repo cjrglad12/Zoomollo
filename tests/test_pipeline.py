@@ -46,3 +46,13 @@ def test_sitemap_finds_unlinked_pages(site, tmp_path):
     pipeline.crawl_company(db, "acme.test", max_pages=20, delay=0)
     people = {p["name"]: p for p in db.people()}
     assert people["Carla Diaz"]["seniority"] == "c_level"
+
+
+def test_theme_and_layout_toggles(tmp_path):
+    from zoomollo.web import create_app
+    html = create_app(str(tmp_path / "t.db")).test_client().get("/people").data.decode()
+    for val in ("light", "auto", "dark"):
+        assert f'data-set="theme" data-val="{val}"' in html
+    for val in ("desktop", "auto", "mobile"):
+        assert f'data-set="layout" data-val="{val}"' in html
+    assert ':root[data-theme="dark"]' in html and "html.mobile tr" in html

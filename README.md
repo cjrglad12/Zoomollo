@@ -9,7 +9,9 @@ pip install -e .            # Python 3.10+
 zoomollo serve              # web UI at http://127.0.0.1:8080
 ```
 
-Open the **Prospect** tab, type what the companies do and the city, and hit *Find companies*. Results fill in the **People** tab (filter to *Hiring managers*) and each company gets an org-map page.
+Open the **Prospect** tab, type what the companies do and the city, and hit *Find companies*.
+
+The **Theme** (Light / Auto / Dark) and **Layout** (PC / Auto / Mobile) switches sit at the top of every page. *Auto* follows your device; your choice is remembered in that browser. Mobile turns tables into cards with bigger buttons; PC on a phone shows the full desktop page zoomed to fit. Results fill in the **People** tab (filter to *Hiring managers*) and each company gets an org-map page.
 
 ### Turn on web search (recommended)
 

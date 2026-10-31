@@ -33,9 +33,38 @@ PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Zoomollo</title>
+<script>
+/* Theme + layout preferences: applied before the page draws, so there's no flash. */
+(function () {
+  var d = document.documentElement, mem = {}, mq = window.matchMedia("(max-width: 760px)");
+  function get(k) { if (mem[k]) return mem[k]; try { return localStorage.getItem("zm-" + k) || "auto"; } catch (e) { return "auto"; } }
+  window.zmSet = function (k, v) { mem[k] = v; try { localStorage.setItem("zm-" + k, v); } catch (e) {} window.zmApply(); };
+  window.zmApply = function () {
+    var t = get("theme"), l = get("layout");
+    if (t === "auto") d.removeAttribute("data-theme"); else d.setAttribute("data-theme", t);
+    // "Desktop" on a phone renders the full PC page, zoomed out.
+    var vp = document.querySelector('meta[name="viewport"]');
+    var narrow = Math.min(screen.width, window.innerWidth || screen.width) < 760;
+    if (vp) vp.content = (l === "desktop" && narrow)
+      ? "width=1200, initial-scale=" + (screen.width / 1200).toFixed(3)
+      : "width=device-width, initial-scale=1";
+    d.classList.toggle("mobile", l === "mobile" || (l === "auto" && mq.matches));
+    d.classList.toggle("forced-mobile", l === "mobile" && !mq.matches);
+    document.querySelectorAll("[data-set]").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(get(b.dataset.set) === b.dataset.val));
+    });
+  };
+  window.zmApply();
+  if (mq.addEventListener) mq.addEventListener("change", window.zmApply);
+})();
+</script>
 <style>
-:root{--bg:#f7f7f5;--card:#fff;--ink:#1d1d1b;--muted:#6b6b66;--line:#e4e4df;--accent:#2f5bea;--chip:#eef1fd;--hm:#fff4d6;--hmink:#7a5300}
-@media (prefers-color-scheme:dark){:root{--bg:#141413;--card:#1e1e1c;--ink:#ececE8;--muted:#9a9a94;--line:#2e2e2b;--accent:#7d9bff;--chip:#232a45;--hm:#3a2f12;--hmink:#f3cd6d}}
+:root{--bg:#f7f7f5;--card:#fff;--ink:#1d1d1b;--muted:#6b6b66;--line:#e4e4df;--accent:#2f5bea;--chip:#eef1fd;--hm:#fff4d6;--hmink:#7a5300;
+--ok-bg:#dcfce7;--ok-ink:#166534;--bad-bg:#fee2e2;--bad-ink:#991b1b;--danger:#c2410c;--seg:#efefeb;color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141413;--card:#1e1e1c;--ink:#ececE8;--muted:#9a9a94;--line:#2e2e2b;--accent:#7d9bff;--chip:#232a45;--hm:#3a2f12;--hmink:#f3cd6d;
+--ok-bg:#14361f;--ok-ink:#86efac;--bad-bg:#3f1515;--bad-ink:#fca5a5;--danger:#ea580c;--seg:#2a2a27;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#141413;--card:#1e1e1c;--ink:#ececE8;--muted:#9a9a94;--line:#2e2e2b;--accent:#7d9bff;--chip:#232a45;--hm:#3a2f12;--hmink:#f3cd6d;
+--ok-bg:#14361f;--ok-ink:#86efac;--bad-bg:#3f1515;--bad-ink:#fca5a5;--danger:#ea580c;--seg:#2a2a27;color-scheme:dark}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
 header{display:flex;gap:20px;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line);background:var(--card);flex-wrap:wrap}
 header b{font-size:18px}nav{display:flex;gap:14px;flex-wrap:wrap}nav a{color:var(--muted);text-decoration:none}nav a.on{color:var(--ink);font-weight:600}
@@ -61,20 +90,80 @@ td.v,.v{font-family:ui-monospace,Menlo,monospace;font-size:13px}.chip{background
 .person .n{font-weight:600}.person .t{color:var(--muted);font-size:13px}.person .c{font-size:13px;margin-top:2px;word-break:break-all}
 h2{margin:0 0 4px}.sub{color:var(--muted);margin-bottom:16px}.section{margin:22px 0 10px;font-size:15px}
 form.fb{display:inline}form.fb button{padding:1px 7px;font-size:12px;border-radius:6px;margin-left:2px}
-form.fb button.no{background:#c2410c}form.fb button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
-.st-confirmed,.st-found{background:#dcfce7;color:#166534}.st-failed{background:#fee2e2;color:#991b1b}.st-catch_all{background:var(--hm);color:var(--hmink)}
-@media (prefers-color-scheme:dark){.st-confirmed,.st-found{background:#14361f;color:#86efac}.st-failed{background:#3f1515;color:#fca5a5}}
+form.fb button.no{background:var(--danger)}form.fb button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
+.st-confirmed,.st-found{background:var(--ok-bg);color:var(--ok-ink)}.st-failed{background:var(--bad-bg);color:var(--bad-ink)}.st-catch_all{background:var(--hm);color:var(--hmink)}
+/* Theme / layout switches */
+.toggles{display:flex;gap:10px;margin-left:auto;flex-wrap:wrap}
+.seg{display:inline-flex;align-items:center;background:var(--seg);border:1px solid var(--line);border-radius:10px;padding:3px;gap:2px}
+.seg-l{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:0 6px 0 6px}
+.seg button{background:transparent;color:var(--ink);border:none;border-radius:7px;padding:6px 10px;font-size:13px;white-space:nowrap}
+.seg button[aria-pressed="true"]{background:var(--accent);color:#fff;font-weight:600}
+.seg button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* Mobile layout: stacked cards, bigger tap targets */
+html.mobile header{flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:10px;padding:12px}
+html.mobile .brand{display:flex;justify-content:space-between;align-items:center}
+html.mobile nav{flex-wrap:nowrap;overflow-x:auto;gap:4px;margin:0 -12px;padding:0 12px;scrollbar-width:none}
+html.mobile nav a{padding:8px 12px;border-radius:20px;background:var(--seg);white-space:nowrap}
+html.mobile nav a.on{background:var(--accent);color:#fff}
+html.mobile .toggles{margin-left:0;display:grid;grid-template-columns:minmax(0,1fr);gap:6px}
+html.mobile .seg{display:flex;min-width:0}html.mobile .seg button{flex:1 1 0;min-width:0;padding:8px 2px;overflow:hidden;text-overflow:ellipsis}
+html.mobile .seg-l{width:58px;flex:none}
+html.mobile main{padding:12px}
+html.mobile .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}html.mobile .stat{min-width:0;padding:8px 10px}
+html.mobile form.bar > *{flex:1 1 100%}html.mobile form.bar button,html.mobile form.bar a.btn{flex:1 1 40%;text-align:center}
+html.mobile input,html.mobile select,html.mobile textarea{font-size:16px}
+html.mobile .grid,html.mobile .org{grid-template-columns:1fr}
+html.mobile .wrap{background:none;border:none;overflow:visible}
+html.mobile table,html.mobile tbody,html.mobile tr,html.mobile td{display:block;width:100%}
+html.mobile tr.hdr{display:none}
+html.mobile tr{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-bottom:10px}
+html.mobile td{border:none;padding:4px 0;white-space:normal;word-break:break-word;min-width:0}
+html.mobile td[data-label]::before{content:attr(data-label);display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+html.mobile td[data-label=""]::before{display:none}
+html.mobile td.empty{display:none}
+html.mobile td.wraptext{min-width:0}
+html.mobile form.fb button{padding:6px 12px;font-size:14px;margin:4px 4px 0 0}
+html.mobile .sub{font-size:14px}html.mobile h2{font-size:21px}
+html.forced-mobile body{max-width:480px;margin:0 auto;border-left:1px solid var(--line);border-right:1px solid var(--line);min-height:100vh}
 .reason{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
 a{color:var(--accent)}.warn{background:var(--hm);color:var(--hmink);padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:12px}
 </style></head><body>
-<header><b>Zoomollo</b><nav>
+<header><div class="brand"><b>Zoomollo</b></div><nav>
 {% for t,label in [('find','Prospect'),('people','People'),('companies','Companies'),('contacts','Contacts'),('jobs','Jobs')] %}
-<a href="{{ url_for(t) }}" class="{{ 'on' if tab==t }}">{{ label }}</a>{% endfor %}</nav></header>
+<a href="{{ url_for(t) }}" class="{{ 'on' if tab==t }}">{{ label }}</a>{% endfor %}</nav>
+<div class="toggles">
+<div class="seg" role="group" aria-label="Theme"><span class="seg-l">Theme</span>
+<button type="button" data-set="theme" data-val="light" onclick="zmSet('theme','light')">☀︎ Light</button>
+<button type="button" data-set="theme" data-val="auto" onclick="zmSet('theme','auto')">Auto</button>
+<button type="button" data-set="theme" data-val="dark" onclick="zmSet('theme','dark')">☾ Dark</button></div>
+<div class="seg" role="group" aria-label="Layout"><span class="seg-l">Layout</span>
+<button type="button" data-set="layout" data-val="desktop" onclick="zmSet('layout','desktop')">🖥 PC</button>
+<button type="button" data-set="layout" data-val="auto" onclick="zmSet('layout','auto')">Auto</button>
+<button type="button" data-set="layout" data-val="mobile" onclick="zmSet('layout','mobile')">📱 Mobile</button></div>
+</div></header>
 <main>
 <div class="stats">{% for k,v in stats.items() %}<div class="stat"><span>{{ k }}</span><strong>{{ v }}</strong></div>{% endfor %}
 {% if busy %}<div class="stat"><span>queue</span><strong>{{ busy }} running</strong></div>{% endif %}</div>
 {{ body|safe }}
-</main></body></html>"""
+</main>
+<script>
+// Label every table cell with its column name so rows can stack as cards on mobile.
+document.querySelectorAll("table").forEach(function (t) {
+  var first = t.rows[0], heads = [];
+  if (first && first.querySelector("th")) {
+    first.classList.add("hdr");
+    heads = Array.prototype.map.call(first.cells, function (c) { return c.textContent.trim(); });
+  }
+  Array.prototype.forEach.call(t.rows, function (r) {
+    if (r === first) return;
+    Array.prototype.forEach.call(r.cells, function (c, i) {
+      c.setAttribute("data-label", c.colSpan > 1 ? "" : (heads[i] || ""));
+      if (!c.textContent.trim() && !c.querySelector("form, input, img")) c.classList.add("empty");
+    });
+  });
+});
+window.zmApply();
+</script></body></html>"""
 
 FIND = """<div class="grid">
 <form class="card big" method="post" action="{{ url_for('enqueue') }}"><h3>Prospect</h3>
