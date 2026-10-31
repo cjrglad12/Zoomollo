@@ -32,6 +32,7 @@ zoomollo guess "Jane Doe" acme.com          # best-guess work email
 zoomollo search "vp sales"                  # search saved contacts
 zoomollo suppress jane@acme.com             # opt-out: delete + never store again
 zoomollo block staffco.com                  # block a staffing/recruiting firm the filters missed
+zoomollo text 12 --template 1               # WhatsApp link with a filled-in template for person #12
 zoomollo loxo-push                          # dry run; add --send to push for real
 ```
 
@@ -81,6 +82,18 @@ Each person's email shows its status: `found`, `guessed (try 3/10)`, `confirmed`
 - **After 10 wrong guesses** (or when no guesses are left) the person is marked `failed`.
 - A guess that later appears in a job post or on the site is upgraded to `found` automatically.
 
+## Texting (WhatsApp / SMS) and templates
+
+The **Messages** tab, and the 💬 button next to any phone number, prepare a text for you:
+
+- **Templates** with fields filled in per person: `{first_name}`, `{last_name}`, `{name}`, `{title}`, `{company}`, `{city}`, `{role}` (the open role they most likely own), `{my_name}`, `{my_company}`. Three starter templates are included; edit them or add your own. Unknown fields are filled generically ("Hi there", "a new team member") and flagged so you can tweak the text.
+- **Draft with AI** on your own computer: install [Ollama](https://ollama.com) (free), run `ollama pull llama3.2` once, and the *Draft* button writes a template from a goal and tone. Nothing is sent anywhere. Another model: set `OLLAMA_MODEL` in `zoomollo-settings.txt`.
+- **One tap to send.** *WhatsApp* opens WhatsApp's official click-to-chat link with the message written; *Text* opens your phone's messaging app. You review and press Send. Zoomollo never sends on its own: automated WhatsApp sending needs a Meta business account and opted-in contacts, and unofficial automation gets numbers banned.
+- **Outreach queue:** pick a template and step through hiring managers with their own phone number who haven't been texted yet.
+- Every opened message is logged under *Sent before*. **They opted out (STOP)** blocks that number for good.
+
+Phone numbers are often a company's main line, which may not be on WhatsApp; use *Text* or call instead. US texting rules (TCPA) are strict about automated texts to mobile numbers; sending one by one from your own phone and honouring STOP keeps you on the safer side.
+
 ## Always excluded
 
 Rules live in `zoomollo/exclusions.py`; edit the lists there to change them.
@@ -95,6 +108,8 @@ Rules live in `zoomollo/exclusions.py`; edit the lists there to change them.
 - The websites it crawls (company sites, chamber/association sites, and the government data links you add).
 - OpenStreetMap's free public servers, for map lookups.
 - Companies' own job boards (Greenhouse, Lever, Ashby, Workable) when their careers page links to one.
+- WhatsApp or your phone's text app, only when you tap a send button (you press Send there).
+- Ollama on your own computer, only if you install it for AI drafting.
 - Loxo, only if you set it up (below).
 
 No search engines, data vendors, email-verification services or other paid services.

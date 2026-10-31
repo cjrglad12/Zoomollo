@@ -5,3 +5,8 @@
 # Optional: push contacts into your Loxo account
 LOXO_AGENCY_SLUG=
 LOXO_API_KEY=
+
+# Optional: AI message drafting runs on this computer with Ollama (https://ollama.com).
+# Leave blank for the defaults (model llama3.2 at http://localhost:11434).
+OLLAMA_MODEL=
+OLLAMA_URL=

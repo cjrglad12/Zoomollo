@@ -121,13 +121,16 @@ html.mobile td[data-label=""]::before{display:none}
 html.mobile td.empty{display:none}
 html.mobile td.wraptext{min-width:0}
 html.mobile form.fb button{padding:6px 12px;font-size:14px;margin:4px 4px 0 0}
-html.mobile .sub{font-size:14px}html.mobile h2{font-size:21px}
+html.mobile .tpl textarea{min-height:220px}html.mobile .sub{font-size:14px}html.mobile h2{font-size:21px}
 html.forced-mobile body{max-width:480px;margin:0 auto;border-left:1px solid var(--line);border-right:1px solid var(--line);min-height:100vh}
+a.msg{text-decoration:none;padding:1px 6px;border:1px solid var(--line);border-radius:6px;font-size:13px}
+.wa{background:#1f9d55}.sent{opacity:.55}.tpl textarea{width:100%;min-height:110px}.fields code{background:var(--chip);border-radius:4px;padding:1px 5px;font-size:12px;margin:2px;display:inline-block}
+.preview{white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:14px}
 .reason{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
 a{color:var(--accent)}.warn{background:var(--hm);color:var(--hmink);padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:12px}
 </style></head><body>
 <header><div class="brand"><b>Zoomollo</b></div><nav>
-{% for t,label in [('find','Prospect'),('people','People'),('companies','Companies'),('contacts','Contacts'),('jobs','Jobs')] %}
+{% for t,label in [('find','Prospect'),('people','People'),('companies','Companies'),('contacts','Contacts'),('jobs','Jobs'),('messages','Messages')] %}
 <a href="{{ url_for(t) }}" class="{{ 'on' if tab==t }}">{{ label }}</a>{% endfor %}</nav>
 <div class="toggles">
 <div class="seg" role="group" aria-label="Theme"><span class="seg-l">Theme</span>
@@ -206,7 +209,7 @@ PEOPLE = EMAIL_MACRO + """<form class="bar"><input type="search" name="q" value=
 {% for p in rows %}<tr><td><b>{{ p.name }}</b></td><td>{{ p.title or '' }}</td>
 <td><a href="{{ url_for('company', cid=p.company_id) }}">{{ p.company_name or p.company_key }}</a></td>
 <td class="v">{{ email_cell(p) }}</td>
-<td class="v">{{ p.phone or '' }}</td><td class="wraptext">{% if p.hiring_for %}<span class="chip hm">{{ p.hiring_for }}</span>{% endif %}</td>
+<td class="v">{% if p.phone %}{{ p.phone }} <a class="msg" href="{{ url_for('message', person=p.id) }}" title="Text on WhatsApp / SMS">💬</a>{% endif %}</td><td class="wraptext">{% if p.hiring_for %}<span class="chip hm">{{ p.hiring_for }}</span>{% endif %}</td>
 <td>{% if p.linkedin_url %}<a href="{{ p.linkedin_url }}" target="_blank" rel="noopener">profile</a>{% endif %}</td></tr>
 {% else %}<tr><td colspan="7">No people yet. Start on the <a href="{{ url_for('find') }}">Prospect</a> tab.</td></tr>{% endfor %}</table></div>"""
 
@@ -216,7 +219,7 @@ COMPANY = EMAIL_MACRO + """<h2>{{ co.name or co.key }}</h2>
 <button class="no">Block (staffing / recruiting)</button></form>
 <div class="sub">{% if co.domain %}<a href="https://{{ co.domain }}" target="_blank" rel="noopener">{{ co.domain }}</a> · {% endif %}
 {% if co.industry %}{{ co.industry }} · {% endif %}{% if co.city %}{{ co.city }} · {% endif %}
-{% if co.phone %}<span class="v">{{ co.phone }}</span> · {% endif %}{% if co.address %}{{ co.address }} · {% endif %}
+{% if co.phone %}<span class="v">{{ co.phone }}</span> <a class="msg" href="{{ url_for('message', company=co.id) }}" title="Text on WhatsApp / SMS">💬</a> · {% endif %}{% if co.address %}{{ co.address }} · {% endif %}
 {% if co.email_pattern %}email format <span class="v">{{ co.email_pattern }}@{{ co.domain }}</span> ({{ (co.pattern_confidence*100)|int }}%){% endif %}</div>
 
 <div class="section"><b>Org map</b> <span class="muted">· {{ people|length }} people</span></div>
@@ -224,7 +227,7 @@ COMPANY = EMAIL_MACRO + """<h2>{{ co.name or co.key }}</h2>
 {% for p in ps %}<div class="person"><div class="n">{{ p.name }} {% if p.hiring_for %}<span class="chip hm">hiring</span>{% endif %}</div>
 <div class="t">{{ p.title or '' }}{% if p.seniority %} · {{ levels[p.seniority] }}{% endif %}</div>
 <div class="c v">{{ email_cell(p) }}
-{% if p.phone %}<br>{{ p.phone }}{% endif %}{% if p.linkedin_url %}<br><a href="{{ p.linkedin_url }}" target="_blank" rel="noopener">profile</a>{% endif %}</div>
+{% if p.phone %}<br>{{ p.phone }} <a class="msg" href="{{ url_for('message', person=p.id) }}" title="Text on WhatsApp / SMS">💬</a>{% endif %}{% if p.linkedin_url %}<br><a href="{{ p.linkedin_url }}" target="_blank" rel="noopener">profile</a>{% endif %}</div>
 </div>{% endfor %}</div>{% endfor %}</div>
 {% else %}<p class="muted">No people found yet.</p>{% endif %}
 
@@ -257,6 +260,66 @@ CONTACTS = """<form class="bar"><input type="search" name="q" value="{{ q }}" pl
 <td class="v">{{ r.value }}</td><td><span class="chip">{{ r.kind }}</span></td>
 <td>{% if r.source_url and r.source_url.startswith('http') %}<a href="{{ r.source_url }}" target="_blank" rel="noopener">page</a>{% endif %}</td></tr>
 {% else %}<tr><td colspan="6">Nothing yet.</td></tr>{% endfor %}</table></div>"""
+
+MESSAGES = """<div class="grid">
+<form class="card" method="post" action="{{ url_for('messages_post') }}"><h3>Your details</h3>
+<p>Used for {my_name} and {my_company} in templates.</p><input type="hidden" name="action" value="me">
+<input name="my_name" value="{{ my_name }}" placeholder="Your name" style="width:100%;margin-bottom:8px">
+<input name="my_company" value="{{ my_company }}" placeholder="Your company" style="width:100%;margin-bottom:8px"><button>Save</button></form>
+
+<form class="card" method="post" action="{{ url_for('messages_post') }}"><h3>Draft a template with AI</h3>
+<p>Runs on your own computer (Ollama) — nothing is sent anywhere. {% if not ai %}<b>Not set up yet:</b> {{ ai_help }}{% endif %}</p>
+<input type="hidden" name="action" value="draft">
+<input name="goal" value="{{ goal }}" placeholder="Goal, e.g. offer a pre-vetted candidate for their open role" style="width:100%;margin-bottom:8px">
+<div class="row"><select name="tone">{% for t in ['warm and direct','formal','casual and upbeat','short and to the point'] %}<option {{ 'selected' if t==tone }}>{{ t }}</option>{% endfor %}</select>
+<select name="length"><option value="short">Short</option><option value="medium" {{ 'selected' if length=='medium' }}>Medium</option></select>
+<button>Draft</button></div>{% if draft_error %}<div class="warn" style="margin-top:10px">{{ draft_error }}</div>{% endif %}</form>
+
+<div class="card big"><h3>Templates</h3>
+<p class="fields">Fields: {% for f in fields %}<code>{{ '{' ~ f ~ '}' }}</code>{% endfor %} — <code>{role}</code> is the open role the person most likely owns.</p>
+{% for t in templates %}<form class="tpl" method="post" action="{{ url_for('messages_post') }}" style="margin-bottom:14px">
+<input type="hidden" name="action" value="save"><input type="hidden" name="id" value="{{ t.id }}">
+<input name="name" value="{{ t.name }}" style="width:100%;margin-bottom:6px;font-weight:600"><textarea name="body">{{ t.body }}</textarea>
+<div class="row"><button>Save</button><a class="btn" href="{{ url_for('messages', template=t.id) }}#queue">Use for outreach</a>
+<button name="action" value="delete" class="no" style="background:var(--danger)" onclick="return confirm('Delete this template?')">Delete</button></div></form>{% endfor %}
+<form class="tpl" method="post" action="{{ url_for('messages_post') }}"><input type="hidden" name="action" value="save">
+<input name="name" value="{{ 'AI draft' if draft else '' }}" placeholder="New template name" style="width:100%;margin-bottom:6px;font-weight:600" required>
+<textarea name="body" placeholder="Hi {first_name}, ..." required>{{ draft or '' }}</textarea><button>{{ 'Save AI draft' if draft else 'Add template' }}</button></form></div>
+
+<div class="card big" id="queue"><h3>Outreach queue</h3>
+<p>People with their own phone number who haven't been texted yet. Each button opens WhatsApp (or your text app) with the message written — you press Send.</p>
+<form class="bar" action="{{ url_for('messages') }}#queue"><select name="template">{% for t in templates %}<option value="{{ t.id }}" {{ 'selected' if t.id==tid }}>{{ t.name }}</option>{% endfor %}</select>
+<input type="search" name="q" value="{{ q }}" placeholder="Filter: company, city, title…">
+<label class="chip" style="padding:8px 10px"><input type="checkbox" name="all" value="1" {{ 'checked' if all_people }} style="padding:0"> Everyone (not just hiring managers)</label><button>Show</button></form>
+<div class="wrap"><table><tr><th>Person</th><th>Message</th><th>Send</th></tr>
+{% for r in queue %}<tr id="q{{ r.p.id }}"><td><b>{{ r.p.name }}</b><br><span class="muted">{{ r.p.title or '' }} · {{ r.p.company_name or '' }}</span><br><span class="v">{{ r.p.phone }}</span></td>
+<td class="wraptext"><div class="preview">{{ r.text }}</div>{% if r.missing %}<span class="muted" style="font-size:12px">Not known, filled generically: {{ r.missing|join(', ') }}</span>{% endif %}</td>
+<td>{{ send_buttons(r.p.phone, r.text, r.p.id, None, tid) }}<br><a href="{{ url_for('message', person=r.p.id, template=tid) }}">edit first</a></td></tr>
+{% else %}<tr><td colspan="3">{% if not templates %}Add a template first.{% else %}Nobody to text: no saved people with their own phone number (company main lines are on each company page).{% endif %}</td></tr>{% endfor %}</table></div></div>
+</div>"""
+
+SEND_MACRO = """{% macro send_buttons(phone, text, pid, cid, tid) %}
+{% for ch, label, cls in [('whatsapp', 'WhatsApp', 'wa'), ('sms', 'Text', '')] %}
+<form class="fb" method="post" action="{{ url_for('message_send') }}" target="_blank" onsubmit="var r=this.closest('tr');if(r)r.classList.add('sent')">
+<input type="hidden" name="phone" value="{{ phone }}"><input type="hidden" name="text" value="{{ text }}">
+<input type="hidden" name="channel" value="{{ ch }}"><input type="hidden" name="person" value="{{ pid or '' }}">
+<input type="hidden" name="company" value="{{ cid or '' }}"><input type="hidden" name="template" value="{{ tid or '' }}">
+<button class="{{ cls }}">{{ label }}</button></form>{% endfor %}
+{% endmacro %}"""
+
+MESSAGE_ONE = """<h2>Text {{ who }}</h2><div class="sub">{{ phone }}{% if last %} · last texted {{ last[:10] }}{% endif %}</div>
+{% if blocked %}<div class="warn">This number opted out. It can't be texted from Zoomollo.</div>{% else %}
+<form class="bar" action="{{ url_for('message') }}"><input type="hidden" name="person" value="{{ pid or '' }}"><input type="hidden" name="company" value="{{ cid or '' }}">
+<select name="template" onchange="this.form.submit()">{% for t in templates %}<option value="{{ t.id }}" {{ 'selected' if t.id==tid }}>{{ t.name }}</option>{% endfor %}</select></form>
+<form method="post" action="{{ url_for('message_send') }}" target="_blank" class="card tpl">
+<textarea name="text">{{ text }}</textarea>
+{% if missing %}<p>Not known, filled generically: {{ missing|join(', ') }}. Edit the message if it reads oddly.</p>{% endif %}
+<input type="hidden" name="phone" value="{{ phone }}"><input type="hidden" name="person" value="{{ pid or '' }}">
+<input type="hidden" name="company" value="{{ cid or '' }}"><input type="hidden" name="template" value="{{ tid or '' }}">
+<div class="row"><button name="channel" value="whatsapp" class="wa">Open in WhatsApp</button><button name="channel" value="sms">Open in Text app</button></div></form>
+<form method="post" action="{{ url_for('message_optout') }}" style="margin-top:12px" onsubmit="return confirm('Mark this number as opted out? It will never be texted again.')">
+<input type="hidden" name="phone" value="{{ phone }}"><button class="no" style="background:var(--danger)">They opted out (STOP)</button></form>{% endif %}
+{% if history %}<div class="section"><b>Sent before</b></div>{% for m in history %}<div class="preview" style="margin-bottom:8px"><span class="muted">{{ m.sent_at[:16].replace('T',' ') }} · {{ m.channel }}</span><br>{{ m.body }}</div>{% endfor %}{% endif %}"""
 
 JOBS = """<form class="bar"><input type="search" name="q" value="{{ q }}" placeholder="Role, company, city, contact…"><button>Search</button>
 <a class="btn" href="{{ url_for('export_hiring', q=q) }}">Export roles × contacts CSV</a></form>
@@ -350,6 +413,103 @@ def create_app(db_path: str | None = None) -> Flask:
             tasks.put((action, it, {}))
             log.appendleft(f"queued {action} {it}")
         return redirect(url_for("find"))
+
+    # --- messages -------------------------------------------------------------
+    from . import messaging
+
+    @app.get("/messages")
+    def messages(**extra):
+        db = DB(db_path)
+        messaging.ensure_starters(db)
+        templates = db.templates()
+        tid = int(request.args.get("template") or (templates[0]["id"] if templates else 0))
+        tpl = db.template(tid) if tid else None
+        q = request.args.get("q", "")
+        all_people = bool(request.args.get("all"))
+        queue = []
+        if tpl:
+            for p in messaging.outreach_list(db, q=q, hiring_only=not all_people, limit=100):
+                text, missing = messaging.render(tpl["body"], messaging.person_fields(db, p["id"]))
+                queue.append({"p": p, "text": text, "missing": missing})
+        from . import ai
+        return render("messages", SEND_MACRO + MESSAGES, templates=templates, tid=tid, queue=queue, q=q,
+                      all_people=all_people, fields=messaging.FIELDS, my_name=db.get_setting("my_name") or "",
+                      my_company=db.get_setting("my_company") or "", ai=ai.available(), ai_help=ai.SETUP_HELP,
+                      draft=extra.get("draft"), draft_error=extra.get("draft_error"),
+                      goal=extra.get("goal", ""), tone=extra.get("tone", "warm and direct"),
+                      length=extra.get("length", "short"))
+
+    @app.post("/messages")
+    def messages_post():
+        db = DB(db_path)
+        action = request.form.get("action")
+        if action == "me":
+            db.set_setting("my_name", request.form.get("my_name", ""))
+            db.set_setting("my_company", request.form.get("my_company", ""))
+        elif action == "save":
+            name, body = request.form.get("name", "").strip(), request.form.get("body", "").strip()
+            if name and body:
+                db.save_template(name, body, int(request.form.get("id") or 0) or None)
+        elif action == "delete":
+            db.delete_template(int(request.form.get("id") or 0))
+        elif action == "draft":
+            from . import ai
+            goal, tone, length = (request.form.get(k, "") for k in ("goal", "tone", "length"))
+            try:
+                draft = ai.draft_template(goal, tone or "warm and direct", length or "short")
+                return messages(draft=draft, goal=goal, tone=tone, length=length)
+            except ai.AIUnavailable as e:
+                return messages(draft_error=str(e), goal=goal, tone=tone, length=length)
+            except Exception as e:  # noqa: BLE001
+                return messages(draft_error=f"The AI couldn't draft that ({e}).", goal=goal, tone=tone,
+                                length=length)
+        return redirect(url_for("messages"))
+
+    @app.get("/message")
+    def message():
+        db = DB(db_path)
+        messaging.ensure_starters(db)
+        pid = int(request.args.get("person") or 0) or None
+        cid = int(request.args.get("company") or 0) or None
+        if pid:
+            p = db.conn.execute("SELECT p.*, co.name AS company_name FROM people p JOIN companies co "
+                                "ON co.id = p.company_id WHERE p.id = ?", (pid,)).fetchone()
+            if not p or not p["phone"]:
+                abort(404)
+            phone, who = p["phone"], f"{p['name']} ({p['company_name']})"
+        elif cid:
+            co = db.company_row(cid)
+            if not co or not co["phone"]:
+                abort(404)
+            phone, who = co["phone"], f"{co['name'] or co['key']} (main line)"
+        else:
+            abort(404)
+        templates = db.templates()
+        tid = int(request.args.get("template") or (templates[0]["id"] if templates else 0))
+        tpl = db.template(tid) if tid else None
+        text, missing = (messaging.render(tpl["body"], messaging.person_fields(db, pid, cid)) if tpl else ("", []))
+        e164 = "+" + messaging.digits(phone)
+        history = db.conn.execute("SELECT * FROM messages WHERE phone = ? ORDER BY sent_at DESC", (e164,)).fetchall()
+        return render("messages", MESSAGE_ONE, who=who, phone=phone, pid=pid, cid=cid, templates=templates,
+                      tid=tid, text=text, missing=missing, history=history,
+                      last=messaging.last_messaged(db, phone), blocked=db.is_suppressed(e164))
+
+    @app.post("/message/send")
+    def message_send():
+        db = DB(db_path)
+        f = request.form
+        phone, text, channel = f.get("phone", ""), f.get("text", "").strip(), f.get("channel", "whatsapp")
+        if not messaging.log_message(db, phone, text, channel, int(f.get("person") or 0) or None,
+                                     int(f.get("company") or 0) or None, int(f.get("template") or 0) or None):
+            return Response("This number opted out and can't be texted.", status=403)
+        link = messaging.sms_link(phone, text) if channel == "sms" else messaging.whatsapp_link(phone, text)
+        return redirect(link)
+
+    @app.post("/message/optout")
+    def message_optout():
+        phone = request.form.get("phone", "")
+        DB(db_path).suppress("+" + messaging.digits(phone), "opted out (STOP)")
+        return redirect(request.referrer or url_for("messages"))
 
     @app.get("/people")
     def people():

@@ -102,6 +102,28 @@ CREATE TABLE IF NOT EXISTS data_sources (       -- public data files used on eve
     added_at TEXT NOT NULL,
     last_used TEXT
 );
+CREATE TABLE IF NOT EXISTS templates (          -- text message templates
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS messages (           -- texts opened in WhatsApp / SMS
+    id INTEGER PRIMARY KEY,
+    person_id INTEGER REFERENCES people(id) ON DELETE SET NULL,
+    company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+    phone TEXT NOT NULL,
+    channel TEXT NOT NULL,                     -- whatsapp | sms
+    template_id INTEGER REFERENCES templates(id) ON DELETE SET NULL,
+    body TEXT NOT NULL,
+    sent_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS messages_phone ON messages(phone);
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 CREATE TABLE IF NOT EXISTS blocked_companies (  -- staffing / recruiting firms: never stored again
     key TEXT PRIMARY KEY,                      -- company key or domain
     name TEXT,
@@ -177,6 +199,36 @@ class DB:
                 out["companies"] += 1
         self.conn.commit()
         return out
+
+    # --- templates & settings ---------------------------------------------------
+    def save_template(self, name: str, body: str, template_id: int | None = None) -> int:
+        if template_id:
+            self.conn.execute("UPDATE templates SET name = ?, body = ?, updated_at = ? WHERE id = ?",
+                              (name, body, now(), template_id))
+        else:
+            template_id = self.conn.execute(
+                "INSERT INTO templates (name, body, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                (name, body, now(), now())).lastrowid
+        self.conn.commit()
+        return template_id
+
+    def templates(self) -> list[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM templates ORDER BY id").fetchall()
+
+    def template(self, template_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM templates WHERE id = ?", (template_id,)).fetchone()
+
+    def delete_template(self, template_id: int) -> None:
+        self.conn.execute("DELETE FROM templates WHERE id = ?", (template_id,))
+        self.conn.commit()
+
+    def get_setting(self, key: str) -> str | None:
+        row = self.conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        self.conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", (key, value.strip()))
+        self.conn.commit()
 
     def sources(self) -> list[sqlite3.Row]:
         return self.conn.execute("SELECT * FROM data_sources ORDER BY id").fetchall()
