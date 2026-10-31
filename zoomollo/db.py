@@ -95,6 +95,13 @@ CREATE TABLE IF NOT EXISTS job_contacts (      -- contacts cross-referenced to a
     UNIQUE (job_id, person_id, value)
 );
 CREATE INDEX IF NOT EXISTS job_contacts_job ON job_contacts(job_id);
+CREATE TABLE IF NOT EXISTS data_sources (       -- public data files used on every prospect run
+    id INTEGER PRIMARY KEY,
+    url TEXT UNIQUE NOT NULL,                  -- link or file path
+    label TEXT,
+    added_at TEXT NOT NULL,
+    last_used TEXT
+);
 CREATE TABLE IF NOT EXISTS blocked_companies (  -- staffing / recruiting firms: never stored again
     key TEXT PRIMARY KEY,                      -- company key or domain
     name TEXT,
@@ -170,6 +177,21 @@ class DB:
                 out["companies"] += 1
         self.conn.commit()
         return out
+
+    def sources(self) -> list[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM data_sources ORDER BY id").fetchall()
+
+    def add_source(self, url: str, label: str | None = None) -> int:
+        from urllib.parse import urlparse
+        label = label or urlparse(url).netloc or url.rsplit("/", 1)[-1]
+        self.conn.execute("INSERT INTO data_sources (url, label, added_at) VALUES (?, ?, ?) "
+                          "ON CONFLICT(url) DO UPDATE SET label = excluded.label", (url.strip(), label, now()))
+        self.conn.commit()
+        return self.conn.execute("SELECT id FROM data_sources WHERE url = ?", (url.strip(),)).fetchone()[0]
+
+    def remove_source(self, source_id: int) -> None:
+        self.conn.execute("DELETE FROM data_sources WHERE id = ?", (source_id,))
+        self.conn.commit()
 
     def is_blocked(self, *keys: str | None) -> bool:
         keys = [k.lower() for k in keys if k]

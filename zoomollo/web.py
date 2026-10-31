@@ -10,7 +10,6 @@ from flask import Flask, Response, abort, redirect, render_template_string, requ
 
 from . import pipeline
 from .db import DB
-from .search import get_provider
 
 DEPT_LABELS = {
     "executive": "Leadership", "sales": "Sales", "marketing": "Marketing", "operations": "Operations",
@@ -19,12 +18,11 @@ DEPT_LABELS = {
 }
 LEVEL_LABELS = {"c_level": "Exec", "vp": "VP", "director": "Director", "manager": "Manager", "staff": "Staff"}
 
-EMAIL_MACRO = """{% macro email_cell(p, verify) %}
+EMAIL_MACRO = """{% macro email_cell(p) %}
 {% if p.email %}<a href="mailto:{{ p.email }}">{{ p.email }}</a>
 <span class="chip st-{{ p.email_status }}">{{ p.email_status }}{% if p.email_status == 'guessed' %} · try {{ (p.email_attempts or 0) + 1 }}/10{% endif %}</span>
 {% if p.email_status != 'confirmed' %}<form class="fb" method="post" action="{{ url_for('email_feedback', pid=p.id, action='good') }}"><button title="Correct">✓</button></form>
-<form class="fb" method="post" action="{{ url_for('email_feedback', pid=p.id, action='bad') }}"><button class="no" title="Wrong / bounced: try the next guess">✗</button></form>
-{% if verify %}<form class="fb" method="post" action="{{ url_for('email_feedback', pid=p.id, action='verify') }}"><button class="ghost" title="Check with your verification service, re-guessing until valid">check</button></form>{% endif %}{% endif %}
+<form class="fb" method="post" action="{{ url_for('email_feedback', pid=p.id, action='bad') }}"><button class="no" title="Wrong / bounced: try the next guess">✗</button></form>{% endif %}
 {% elif p.email_status == 'failed' %}<span class="chip st-failed">no match after {{ p.email_attempts }} tries</span>
 {% else %}<form class="fb" method="post" action="{{ url_for('email_feedback', pid=p.id, action='guess') }}"><button class="ghost">guess email</button></form>{% endif %}
 {% endmacro %}"""
@@ -168,7 +166,7 @@ window.zmApply();
 FIND = """<div class="grid">
 <form class="card big" method="post" action="{{ url_for('enqueue') }}"><h3>Prospect</h3>
 <p>Describe the companies and the city. Zoomollo finds them, crawls their sites and job boards, maps their people and flags likely hiring managers.</p>
-{% if not provider %}<div class="warn">No search key yet, so only OpenStreetMap and company websites are used. Paste a Brave Search API key into <b>zoomollo-settings.txt</b> (in the Zoomollo folder) next to BRAVE_API_KEY=, then close and restart Zoomollo, to find many more companies and people.</div>{% endif %}
+<p>Companies come from map data, chamber of commerce and association member directories, your public data sources below, and links between company websites. No search engines or paid services.</p>
 <input type="hidden" name="action" value="prospect">
 <div class="row"><input name="what" placeholder="What they do: commercial HVAC, law firms, SaaS…" required>
 <input name="where" placeholder="City: Austin, TX" required>
@@ -182,6 +180,14 @@ FIND = """<div class="grid">
 <form class="card" method="post" action="{{ url_for('enqueue') }}"><h3>Import job boards</h3>
 <p>board:slug per line (greenhouse, lever, ashby, workable), or a bare slug to try all.</p>
 <input type="hidden" name="action" value="jobs"><textarea name="items" placeholder="greenhouse:stripe"></textarea><button>Import</button></form>
+<div class="card"><h3>Public data sources</h3>
+<p>License lists, permit records or business registrations from government websites (a CSV/JSON link, or a file path on this computer). Every prospect run reads them and keeps the businesses that match the industry and city.</p>
+{% for src in sources %}<div class="row" style="align-items:center;margin-bottom:6px"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis"><b>{{ src.label }}</b><br><span class="muted v" style="font-size:12px">{{ src.url }}</span></span>
+<form class="fb" method="post" action="{{ url_for('enqueue') }}"><input type="hidden" name="action" value="source-remove"><input type="hidden" name="id" value="{{ src.id }}"><button class="no" title="Remove">✗</button></form></div>
+{% else %}<p class="muted">None yet.</p>{% endfor %}
+<form method="post" action="{{ url_for('enqueue') }}"><input type="hidden" name="action" value="source-add">
+<input name="url" placeholder="https://data.yourcity.gov/resource/xxxx-xxxx.json" style="width:100%;margin-bottom:8px" required>
+<input name="label" placeholder="Name (e.g. Austin building permits)" style="width:100%;margin-bottom:8px"><button>Add source</button></form></div>
 <form class="card" method="post" action="{{ url_for('enqueue') }}"><h3>Bounced emails</h3>
 <p>Paste bounce notices, a CSV, or addresses. Each bad address is blocked and that person gets the next guess (up to 10).</p>
 <input type="hidden" name="action" value="bounces"><textarea name="items" placeholder="Delivery to jane.doe@acme.com failed…"></textarea><button>Process bounces</button>
@@ -199,7 +205,7 @@ PEOPLE = EMAIL_MACRO + """<form class="bar"><input type="search" name="q" value=
 <div class="wrap"><table><tr><th>Name</th><th>Title</th><th>Company</th><th>Email</th><th>Phone</th><th>Hiring for</th><th></th></tr>
 {% for p in rows %}<tr><td><b>{{ p.name }}</b></td><td>{{ p.title or '' }}</td>
 <td><a href="{{ url_for('company', cid=p.company_id) }}">{{ p.company_name or p.company_key }}</a></td>
-<td class="v">{{ email_cell(p, verify) }}</td>
+<td class="v">{{ email_cell(p) }}</td>
 <td class="v">{{ p.phone or '' }}</td><td class="wraptext">{% if p.hiring_for %}<span class="chip hm">{{ p.hiring_for }}</span>{% endif %}</td>
 <td>{% if p.linkedin_url %}<a href="{{ p.linkedin_url }}" target="_blank" rel="noopener">profile</a>{% endif %}</td></tr>
 {% else %}<tr><td colspan="7">No people yet. Start on the <a href="{{ url_for('find') }}">Prospect</a> tab.</td></tr>{% endfor %}</table></div>"""
@@ -217,7 +223,7 @@ COMPANY = EMAIL_MACRO + """<h2>{{ co.name or co.key }}</h2>
 {% if people %}<div class="org">{% for d, ps in org %}<div class="card dept"><h4>{{ depts[d] }}</h4>
 {% for p in ps %}<div class="person"><div class="n">{{ p.name }} {% if p.hiring_for %}<span class="chip hm">hiring</span>{% endif %}</div>
 <div class="t">{{ p.title or '' }}{% if p.seniority %} · {{ levels[p.seniority] }}{% endif %}</div>
-<div class="c v">{{ email_cell(p, verify) }}
+<div class="c v">{{ email_cell(p) }}
 {% if p.phone %}<br>{{ p.phone }}{% endif %}{% if p.linkedin_url %}<br><a href="{{ p.linkedin_url }}" target="_blank" rel="noopener">profile</a>{% endif %}</div>
 </div>{% endfor %}</div>{% endfor %}</div>
 {% else %}<p class="muted">No people found yet.</p>{% endif %}
@@ -277,7 +283,7 @@ def create_app(db_path: str | None = None) -> Flask:
             try:
                 if action == "prospect":
                     r = pipeline.prospect(db, opts["what"], opts["where"], opts.get("limit", 25),
-                                          provider=get_provider(), progress=log.appendleft)
+                                          progress=log.appendleft)
                     log.appendleft(f"✓ done: {r['companies']} companies, {r['people']} people, "
                                    f"{r['hiring_managers']} hiring managers, {r['jobs']} jobs "
                                    f"({r['skipped_staffing']} staffing/recruiting firms skipped)")
@@ -306,16 +312,14 @@ def create_app(db_path: str | None = None) -> Flask:
 
     def render(tab, tpl, **ctx):
         db = DB(db_path)
-        from .emailcheck import get_verifier
-        body = render_template_string(tpl, depts=DEPT_LABELS, levels=LEVEL_LABELS,
-                                      verify=get_verifier() is not None, **ctx)
+        body = render_template_string(tpl, depts=DEPT_LABELS, levels=LEVEL_LABELS, **ctx)
         return render_template_string(PAGE, tab=tab, body=body, stats=db.stats(),
                                       busy=state["busy"] + tasks.qsize())
 
     @app.get("/")
     def find():
         return render("find", FIND, log=list(log), guesses=request.args.getlist("g"), bounced=request.args.getlist("b"),
-                      provider=get_provider() is not None)
+                      sources=DB(db_path).sources())
 
     @app.post("/")
     def enqueue():
@@ -324,6 +328,12 @@ def create_app(db_path: str | None = None) -> Flask:
             name, domain = request.form.get("name", ""), request.form.get("domain", "")
             guesses = pipeline.guess_for_person(DB(db_path), name, domain) if name and domain else []
             return redirect(url_for("find", g=guesses[:5]))
+        if action == "source-add" and request.form.get("url", "").strip():
+            DB(db_path).add_source(request.form["url"], request.form.get("label", "").strip() or None)
+            return redirect(url_for("find"))
+        if action == "source-remove":
+            DB(db_path).remove_source(int(request.form.get("id", 0)))
+            return redirect(url_for("find"))
         if action == "bounces":
             from .emailcheck import import_bounces
             res = import_bounces(DB(db_path), request.form.get("items", ""))
@@ -403,8 +413,6 @@ def create_app(db_path: str | None = None) -> Flask:
             emailcheck.mark_bad(db, row["email"], "marked wrong")
         elif action == "guess":
             emailcheck.next_guess(db, pid)
-        elif action == "verify" and (v := emailcheck.get_verifier()):
-            emailcheck.auto_verify(db, pid, v)
         pipeline.assign_hiring_managers(db, row["company_id"])
         return redirect(request.referrer or url_for("people"))
 

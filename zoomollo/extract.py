@@ -108,8 +108,10 @@ class PageResult:
     links: list[str] = field(default_factory=list)
     title: str | None = None
     description: str | None = None  # <meta name="description">
+    text: str = ""                   # visible text (first 20k characters)
     ats: set[tuple[str, str]] = field(default_factory=set)
     jobs: list[dict] = field(default_factory=list)
+    link_text: dict[str, str] = field(default_factory=dict)  # url -> anchor text
 
 
 def deobfuscate(text: str) -> str:
@@ -327,6 +329,8 @@ def extract_page(html: str, url: str, region: str = "US") -> PageResult:
                 res.socials.add(absolute.rstrip("/"))
             else:
                 res.links.append(absolute)
+                if absolute not in res.link_text:
+                    res.link_text[absolute] = a.get_text(" ", strip=True)[:120]
 
     for tag in soup(["script", "style", "noscript", "svg"]):
         tag.decompose()
@@ -335,6 +339,7 @@ def extract_page(html: str, url: str, region: str = "US") -> PageResult:
         if p.name.lower() not in known:
             res.people.append(p)
     text = soup.get_text(" ", strip=True)
+    res.text = text[:20000]
     res.emails |= find_emails(text)
     res.phones |= find_phones(text, region)
     for p in res.people:

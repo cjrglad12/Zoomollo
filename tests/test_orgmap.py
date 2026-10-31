@@ -1,5 +1,5 @@
 from zoomollo.extract import extract_page, find_ats
-from zoomollo.orgmap import department, hiring_managers, parse_profile_result, seniority
+from zoomollo.orgmap import department, hiring_managers, seniority
 
 
 def test_titles():
@@ -11,17 +11,6 @@ def test_titles():
     assert (seniority("Talent Acquisition Manager"), department("Talent Acquisition Manager")) == ("manager", "hr")
     assert department("HVAC Service Technician") == "operations"
     assert department("Senior Software Engineer") == "engineering"
-
-
-def test_parse_profile_result():
-    f = parse_profile_result("Jane Doe - VP of Sales - Acme Corp | LinkedIn",
-                             "https://www.linkedin.com/in/janedoe?trk=x", "", "Acme")
-    assert (f.name, f.title, f.url) == ("Jane Doe", "VP of Sales", "https://www.linkedin.com/in/janedoe")
-    f = parse_profile_result("Bob Smith – Service Manager at Acme Inc. | LinkedIn",
-                             "https://linkedin.com/in/bob", "", "Acme Inc")
-    assert f.title == "Service Manager"
-    assert parse_profile_result("Jane Doe - VP - Globex | LinkedIn", "https://linkedin.com/in/x", "", "Acme") is None
-    assert parse_profile_result("Acme Corp | LinkedIn", "https://linkedin.com/company/acme", "", "Acme") is None
 
 
 def test_hiring_managers():

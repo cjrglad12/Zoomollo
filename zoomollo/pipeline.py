@@ -16,9 +16,7 @@ from .db import DB, now
 from .exclusions import is_staffing_domain, staffing_signal
 from .extract import is_role_email, looks_like_name, normalize_phone, social_kind
 from .jobboards import fetch_jobs
-from .orgmap import search_people
 from .patterns import PATTERNS, has_mx, infer_pattern, render, split_name
-from .search import SearchProvider
 
 log = logging.getLogger(__name__)
 Progress = Callable[[str], None]
@@ -41,7 +39,7 @@ def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
                   region: str = "US", progress: Progress | None = None,
                   import_ats: bool = True) -> dict:
     domain = normalize_domain(domain)
-    found = {"pages": 0, "emails": 0, "phones": 0, "people": 0, "jobs": 0, "blocked": None}
+    found = {"pages": 0, "emails": 0, "phones": 0, "people": 0, "jobs": 0, "blocked": None, "outlinks": []}
     if db.is_blocked(domain) or is_staffing_domain(domain):
         found["blocked"] = "staffing / recruiting company"
         return found
@@ -86,6 +84,10 @@ def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
                 found["phones"] += 1
         for url in page.socials:
             db.add_social(company_id, social_kind(url) or "other", url)
+        for link in page.links:  # other businesses this site links to (partners, suppliers, clients)
+            d = urlparse(link).netloc.lower().removeprefix("www.")
+            if d and d != domain and not d.endswith("." + domain) and d not in found["outlinks"]:
+                found["outlinks"].append(d)
         for j in page.jobs:
             db.add_job(company_id, "website", j["external_id"], j["title"], j["location"], j["url"],
                        j["posted_at"], j["description"])
@@ -154,20 +156,6 @@ def import_jobs(db: DB, board: str, slug: str, domain: str | None = None,
 
 # --- people -----------------------------------------------------------------
 
-def map_people(db: DB, company_id: int, provider: SearchProvider, max_queries: int = 4) -> int:
-    """Find people at a company through search-engine results for public profiles."""
-    row = db.company_row(company_id)
-    name = row["name"] or row["key"]
-    depts = [r[0] for r in db.conn.execute(
-        "SELECT department, COUNT(*) n FROM jobs WHERE company_id = ? GROUP BY department ORDER BY n DESC",
-        (company_id,))]
-    found = search_people(provider, name, row["city"], depts, max_queries=max_queries)
-    for f in found:
-        db.add_person(company_id, f.name, f.title, linkedin_url=f.url, source="search")
-    db.commit()
-    return len(found)
-
-
 def assign_hiring_managers(db: DB, company_id: int) -> int:
     """Cross-reference people and contacts with the company's open roles."""
     from .xref import cross_reference
@@ -205,32 +193,75 @@ def guess_for_person(db: DB, full_name: str, domain: str, title: str | None = No
 # --- the whole thing ----------------------------------------------------------
 
 def prospect(db: DB, what: str, where: str, limit: int = 25, crawl_pages: int = 15,
-             provider: SearchProvider | None = None, find_people: bool = True,
-             use_osm: bool = True, progress: Progress | None = None) -> dict:
-    """'Commercial HVAC' + 'Austin, TX' -> companies, jobs, people, hiring managers, emails."""
-    from .discover import find_companies
+             use_osm: bool = True, use_hubs: bool = True, use_sources: bool = True,
+             follow_links: bool = True, progress: Progress | None = None, crawler=None) -> dict:
+    """'Commercial HVAC' + 'Austin, TX' -> companies, jobs, people, hiring managers, emails.
+
+    No search engines or paid services: companies come from map data, business-group
+    member directories, public data files you've added, and links between company sites.
+    """
+    from collections import deque
+
+    from .crawler import Crawler
+    from .discover import Candidate, check_site, find_companies, guess_website, is_company_domain
 
     say = progress or (lambda m: None)
+    crawler = crawler or Crawler(max_pages=40, delay=1.0)
     say(f"Looking for {what} in {where}…")
-    cands = find_companies(what, where, limit, provider, use_osm=use_osm, progress=say)
-    say(f"Found {len(cands)} companies")
-    totals = {"companies": 0, "people": 0, "hiring_managers": 0, "jobs": 0, "emails": 0, "phones": 0}
+    cands = find_companies(what, where, limit, use_osm=use_osm, use_hubs=use_hubs, crawler=crawler,
+                           progress=say)
+    if use_sources:
+        from .datasources import from_source
+        for src in db.sources():
+            try:
+                rows = from_source(src["url"], what, where, src["label"])
+                say(f"{src['label']}: {len(rows)} matching records")
+                db.conn.execute("UPDATE data_sources SET last_used = ? WHERE id = ?", (now(), src["id"]))
+                cands += rows
+            except Exception as e:  # noqa: BLE001 - a broken file shouldn't stop the run
+                say(f"{src['label']}: couldn't read ({e})")
+    say(f"Found {len(cands)} candidate companies")
 
-    totals["skipped_staffing"] = 0
-    for i, c in enumerate(cands, 1):
+    totals = {"companies": 0, "people": 0, "hiring_managers": 0, "jobs": 0, "emails": 0, "phones": 0,
+              "skipped_staffing": 0, "found_via_links": 0}
+    queue = deque(cands)
+    seen = {c.key for c in cands} | {c.domain for c in cands if c.domain}
+    checks = 0
+
+    while queue and totals["companies"] < limit:
+        c = queue.popleft()
         if db.is_blocked(c.key, c.domain) or staffing_signal(c.name, domain=c.domain):
             totals["skipped_staffing"] += 1
             continue
+        if c.needs_check:
+            if checks >= limit * 6:
+                continue
+            checks += 1
+            ok, page_name = check_site(crawler, c.domain, what, where)
+            if not ok:
+                continue
+            c.name = page_name or c.name
+            totals["found_via_links"] += 1
+        if not c.domain:
+            c.domain = guess_website(crawler, c.name, where, c.phone, seen)
+            if c.domain:
+                if c.domain in seen and c.key != c.domain:
+                    continue  # already have that site under another listing
+                seen.add(c.domain)
+                c.sources.add("website guessed")
+
         cid = db.company(c.key, domain=c.domain, name=c.name)
-        db.update_company(cid, city=where, industry=what, source=",".join(sorted(c.sources)) or None,
+        db.update_company(cid, city=where, industry=what, source=", ".join(sorted(c.sources)) or None,
                           **{k: v for k, v in {"address": c.address, "phone": c.phone}.items() if v})
         if c.phone and (e164 := normalize_phone(c.phone)):
-            db.add_contact(cid, "phone", e164, "company", source_url="openstreetmap")
+            db.add_contact(cid, "phone", e164, "company", source_url=next(iter(c.sources), None))
         if c.email:
-            db.add_contact(cid, "email", c.email, _kind(c.email), source_url="openstreetmap")
+            db.add_contact(cid, "email", c.email, _kind(c.email), source_url=next(iter(c.sources), None))
+        if c.contact_name:
+            db.add_person(cid, c.contact_name, c.contact_title, source="public record")
         db.commit()
         totals["companies"] += 1
-        label = f"[{i}/{len(cands)}] {c.name}" + (f" ({c.domain})" if c.domain else "")
+        label = f"[{totals['companies']}/{limit}] {c.name}" + (f" ({c.domain})" if c.domain else "")
 
         if c.domain:
             try:
@@ -243,6 +274,12 @@ def prospect(db: DB, what: str, where: str, limit: int = 25, crawl_pages: int = 
                 totals["emails"] += r["emails"]
                 totals["phones"] += r["phones"]
                 totals["jobs"] += r["jobs"]
+                if follow_links:
+                    for d in r["outlinks"]:
+                        if d not in seen and is_company_domain(d) and not db.is_blocked(d):
+                            seen.add(d)
+                            queue.append(Candidate(name=d, domain=d, sources={f"linked from {c.domain}"},
+                                                   needs_check=True))
             except Exception as e:  # noqa: BLE001 - one bad site shouldn't stop the run
                 say(f"{label}: crawl failed ({e})")
         for board, slug in sorted(c.ats):
@@ -250,8 +287,6 @@ def prospect(db: DB, what: str, where: str, limit: int = 25, crawl_pages: int = 
                 totals["jobs"] += import_jobs(db, board, slug, company_id=cid)["jobs"]
             except (requests.RequestException, ValueError):
                 pass
-        if find_people and provider:
-            map_people(db, cid, provider)
         learn_pattern(db, cid)
         guess_people_emails(db, cid)
         assign_hiring_managers(db, cid)
@@ -262,8 +297,7 @@ def prospect(db: DB, what: str, where: str, limit: int = 25, crawl_pages: int = 
         totals["hiring_managers"] += hm
         say(f"{label}: {len(people)} people, {hm} hiring managers")
 
-    if provider:
-        totals["searches_used"] = provider.calls
+    db.commit()
     return totals
 
 

@@ -28,8 +28,23 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("where", help="US city, e.g. 'Austin, TX'")
     pr.add_argument("--limit", type=int, default=25, help="Max companies (default 25)")
     pr.add_argument("--pages", type=int, default=15, help="Pages to crawl per company site")
-    pr.add_argument("--no-people", action="store_true", help="Skip search-engine people lookups")
-    pr.add_argument("--no-osm", action="store_true", help="Skip OpenStreetMap")
+    pr.add_argument("--no-osm", action="store_true", help="Skip map data")
+    pr.add_argument("--no-groups", action="store_true", help="Skip chamber / association member directories")
+    pr.add_argument("--no-sources", action="store_true", help="Skip your saved public data sources")
+    pr.add_argument("--no-links", action="store_true", help="Don't follow links between company sites")
+
+    so = sub.add_parser("sources", help="Public data files (license lists, permits) used on every prospect run")
+    so_sub = so.add_subparsers(dest="sources_cmd", required=True)
+    sa = so_sub.add_parser("add", help="Add a CSV/JSON link or file")
+    sa.add_argument("url")
+    sa.add_argument("--label")
+    so_sub.add_parser("list")
+    sr = so_sub.add_parser("remove")
+    sr.add_argument("id", type=int)
+    st = so_sub.add_parser("test", help="Show what a source would give for a search, without saving")
+    st.add_argument("url")
+    st.add_argument("what")
+    st.add_argument("where")
 
     pe = sub.add_parser("people", help="List mapped people (org charts)")
     pe.add_argument("query", nargs="?", default="")
@@ -47,11 +62,6 @@ def main(argv: list[str] | None = None) -> int:
     eg.add_argument("emails", nargs="+")
     bo = sub.add_parser("bounces", help="Import bounce notices / a list of bad addresses from a file ('-' = stdin)")
     bo.add_argument("file")
-    ve = sub.add_parser("verify", help="Check guesses with NeverBounce/ZeroBounce, re-guessing until valid "
-                                       "or 10 tries")
-    ve.add_argument("query", nargs="?", default="", help="Limit to matching people/companies")
-    ve.add_argument("--hiring", action="store_true", help="Only likely hiring managers")
-    ve.add_argument("--limit", type=int, default=50)
 
     c = sub.add_parser("crawl", help="Crawl company websites for emails and phones")
     c.add_argument("domains", nargs="+", help="Domains, or @file.txt with one per line")
@@ -116,14 +126,25 @@ def main(argv: list[str] | None = None) -> int:
     db = DB(a.db)
 
     if a.cmd == "prospect":
-        from .search import get_provider
-        provider = get_provider()
-        if not provider:
-            print("Note: no search API configured (BRAVE_API_KEY / SERPAPI_KEY / SEARXNG_URL), so only "
-                  "OpenStreetMap and company websites are used. See README.", file=sys.stderr)
-        res = pipeline.prospect(db, a.what, a.where, a.limit, a.pages, provider,
-                                find_people=not a.no_people, use_osm=not a.no_osm, progress=print)
+        res = pipeline.prospect(db, a.what, a.where, a.limit, a.pages, use_osm=not a.no_osm,
+                                use_hubs=not a.no_groups, use_sources=not a.no_sources,
+                                follow_links=not a.no_links, progress=print)
         print(json.dumps(res, indent=2))
+
+    elif a.cmd == "sources":
+        if a.sources_cmd == "add":
+            print(f"Added source #{db.add_source(a.url, a.label)}")
+        elif a.sources_cmd == "remove":
+            db.remove_source(a.id)
+            print(f"Removed source #{a.id}")
+        elif a.sources_cmd == "test":
+            from .datasources import from_source
+            found = from_source(a.url, a.what, a.where)
+            for c in found[:50]:
+                print(" | ".join(x or "" for x in [c.name, c.domain, c.phone, c.address, c.contact_name]))
+            print(f"{len(found)} matching companies")
+        else:
+            _print_rows(db.sources(), ["id", "label", "url", "last_used"])
 
     elif a.cmd == "people":
         _print_rows(db.people(q=a.query, department=a.department, hiring_only=a.hiring, limit=a.limit),
@@ -157,18 +178,6 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"✗ {bad} ({name}) -> " + (f"next guess {nxt}" if nxt else "no guesses left (failed)"))
             if not results:
                 print("No saved people had those addresses (they're still blocked from future guesses).")
-
-    elif a.cmd == "verify":
-        from . import emailcheck
-        verifier = emailcheck.get_verifier()
-        if not verifier:
-            print("Set NEVERBOUNCE_API_KEY or ZEROBOUNCE_API_KEY first.", file=sys.stderr)
-            return 1
-        rows = [p for p in db.people(q=a.query, hiring_only=a.hiring, limit=10_000)
-                if p["email_status"] in (None, "guessed")][: a.limit]
-        for p in rows:
-            email, status = emailcheck.auto_verify(db, p["id"], verifier)
-            print(f"{p['name']} ({p['company_name']}): {email or '-'} [{status}]")
 
     elif a.cmd == "block":
         from .crawler import normalize_domain
