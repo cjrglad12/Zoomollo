@@ -13,6 +13,7 @@ dependencies = [
   "phonenumbers>=8.13",
   "flask>=3.0",
   "dnspython>=2.4",
+  "segno>=1.5",
 ]
 
 [project.optional-dependencies]

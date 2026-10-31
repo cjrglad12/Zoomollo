@@ -27,15 +27,15 @@ def test_render_and_links(tmp_path):
     # Company main line: no person, so generic greeting.
     text, missing = messaging.render("Hi {first_name}, about {company}.", messaging.person_fields(db, company_id=cid))
     assert text == "Hi there, about Acme Mechanical." and missing == ["first_name"]
-    link = messaging.whatsapp_link("(512) 555-0134", "Hi Pat & team")
-    assert link.startswith("https://wa.me/15125550134?text=") and unquote(link.split("text=")[1]) == "Hi Pat & team"
-    assert messaging.sms_link("+15125550134", "Hi").startswith("sms:+15125550134?&body=Hi")
+    link = messaging.sms_link("(512) 555-0134", "Hi Pat & team")
+    assert link.startswith("sms:+15125550134?&body=") and unquote(link.split("body=")[1]) == "Hi Pat & team"
+    assert messaging.qr_svg(link).startswith("<svg")
 
 
 def test_queue_logging_and_optout(tmp_path):
     db, cid, pid = setup(tmp_path)
     assert [p["name"] for p in messaging.outreach_list(db)] == ["Pat Kim"]
-    assert messaging.log_message(db, "+15125550134", "hello", "whatsapp", person_id=pid)
+    assert messaging.log_message(db, "+15125550134", "hello", "sms", person_id=pid)
     assert messaging.outreach_list(db) == []                      # already texted
     assert len(messaging.outreach_list(db, include_messaged=True)) == 1
     db.suppress("+15125550134", "opted out")
@@ -87,11 +87,33 @@ def test_web_messaging_flow(tmp_path, monkeypatch):
     tid = DB(db.path).templates()[-1]["id"]
     one = c.get(f"/message?person={pid}&template={tid}").data.decode()
     assert "Yo Pat at Acme Mechanical" in one
-    r = c.post("/message/send", data={"phone": "+15125550134", "text": "Yo Pat", "channel": "whatsapp",
+    assert "<svg" in one and "Mark as sent" in one                       # QR to send from a phone
+    r = c.post("/message/send", data={"phone": "+15125550134", "text": "Yo Pat", "channel": "sms",
                                       "person": pid, "template": tid})
-    assert r.status_code == 302 and r.headers["Location"].startswith("https://wa.me/15125550134?text=Yo")
-    assert DB(db.path).conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 1
+    assert r.status_code == 302 and r.headers["Location"].startswith("sms:+15125550134?&body=Yo")
+    r = c.post("/message/send", data={"phone": "+15125550134", "text": "Yo Pat", "channel": "manual",
+                                      "person": pid}, headers={"Referer": "/messages"})
+    assert r.status_code == 302 and r.headers["Location"].endswith("/messages")
+    rows = DB(db.path).conn.execute("SELECT channel FROM messages ORDER BY id").fetchall()
+    assert [r[0] for r in rows] == ["sms", "phone"]
+    assert c.post("/message/qr", data={"phone": "+15125550134", "text": "hi"}).data.startswith(b"<svg")
     assert c.get(f"/message?company={cid}").status_code == 200
     c.post("/message/optout", data={"phone": "+15125550134"})
     r = c.post("/message/send", data={"phone": "+15125550134", "text": "again", "channel": "sms"})
     assert r.status_code == 403
+
+
+def test_linkedin_buttons(tmp_path):
+    from zoomollo.orgmap import clean_linkedin_url, linkedin_search_url
+    from zoomollo.web import create_app
+    assert linkedin_search_url("Pat Kim", "Acme Mechanical") == \
+        "https://www.linkedin.com/search/results/people/?keywords=Pat%20Kim%20Acme%20Mechanical"
+    assert clean_linkedin_url("linkedin.com/in/pat-kim-123/?trk=x") == "https://www.linkedin.com/in/pat-kim-123"
+    assert clean_linkedin_url("https://www.linkedin.com/company/acme") is None
+    db, cid, pid = setup(tmp_path)
+    c = create_app(db.path).test_client()
+    page = c.get("/people").data.decode()
+    assert "Find on LinkedIn" in page and "keywords=Pat%20Kim%20Acme%20Mechanical" in page
+    c.post(f"/person/{pid}/linkedin", data={"url": "https://www.linkedin.com/in/patkim/"})
+    page = c.get(f"/company/{cid}").data.decode()
+    assert 'href="https://www.linkedin.com/in/patkim"' in page

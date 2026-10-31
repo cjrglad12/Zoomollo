@@ -1,10 +1,12 @@
-"""Text outreach through WhatsApp (or SMS) with message templates.
+"""Text outreach from your own phone number, with message templates.
 
-Sending is one tap per message: Zoomollo fills in the template and opens
-WhatsApp's official click-to-chat link (https://wa.me/<number>?text=...) or
-your phone's text app with the message ready; you press Send. No WhatsApp
-account linking, no automation and no outside service. Each message opened is
-logged so you can see who you've contacted.
+Free, with no outside service: Zoomollo fills in the template and hands the
+message to your own texting app, and you press Send.
+  * Mac + iPhone: the Text button opens Messages on the Mac (sends via the iPhone).
+  * Any computer: scan the QR code with your phone's camera; the texting app
+    opens with the message ready.
+  * Or copy the text into anything else.
+Each message is logged so you can see who you've contacted.
 
 Templates use fields in curly brackets:
   {first_name} {last_name} {name} {title} {company} {city} {role}
@@ -115,8 +117,11 @@ def digits(phone: str) -> str:
     return d
 
 
-def whatsapp_link(phone: str, text: str) -> str:
-    return f"https://wa.me/{digits(phone)}?text={quote(text)}"
+def qr_svg(link: str, scale: int = 4) -> str:
+    """QR code (inline SVG) that opens a link when scanned with a phone camera.
+    Drawn on this computer with the open-source segno library."""
+    import segno
+    return segno.make(link, error="l").svg_inline(scale=scale, dark="#111", light="#fff")
 
 
 def sms_link(phone: str, text: str) -> str:

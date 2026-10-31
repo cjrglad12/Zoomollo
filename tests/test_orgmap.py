@@ -28,10 +28,12 @@ def test_hiring_managers():
 def test_team_cards_and_ats():
     html = """<div class="team"><div><h3>Maria Lopez</h3><p>Director of Operations</p></div>
     <div><h3>Tom Reed</h3><p>Chief Financial Officer</p></div><div><h3>Our Services</h3><p>We fix things</p></div></div>
+    <div><h3>Ann Lee</h3><p>Controller</p><a href="https://www.linkedin.com/in/annlee/">in</a></div>
     <a href="https://boards.greenhouse.io/acmehvac/jobs/123">Jobs</a>
     <script src="https://boards.greenhouse.io/embed/job_board/js?for=acme2"></script>"""
     r = extract_page(html, "https://acme.com/team")
-    assert {(p.name, p.title) for p in r.people} == {("Maria Lopez", "Director of Operations"),
-                                                     ("Tom Reed", "Chief Financial Officer")}
+    assert {(p.name, p.title, p.linkedin) for p in r.people} == {
+        ("Maria Lopez", "Director of Operations", None), ("Tom Reed", "Chief Financial Officer", None),
+        ("Ann Lee", "Controller", "https://www.linkedin.com/in/annlee/")}  # only her own card's link
     assert r.ats == {("greenhouse", "acmehvac"), ("greenhouse", "acme2")}
     assert find_ats("https://jobs.lever.co/acme/abc") == {("lever", "acme")}

@@ -63,10 +63,9 @@ def main(argv: list[str] | None = None) -> int:
     bo = sub.add_parser("bounces", help="Import bounce notices / a list of bad addresses from a file ('-' = stdin)")
     bo.add_argument("file")
 
-    tx = sub.add_parser("text", help="Print a WhatsApp (or SMS) link with a filled-in template for a person")
+    tx = sub.add_parser("text", help="Print a filled-in text and a link that opens your texting app")
     tx.add_argument("person_id", type=int)
     tx.add_argument("--template", type=int, help="Template id (default: the first one)")
-    tx.add_argument("--sms", action="store_true")
 
     c = sub.add_parser("crawl", help="Crawl company websites for emails and phones")
     c.add_argument("domains", nargs="+", help="Domains, or @file.txt with one per line")
@@ -210,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
         tpl = db.template(a.template) if a.template else db.templates()[0]
         text, missing = messaging.render(tpl["body"], messaging.person_fields(db, p["id"]))
         print(text + ("\n(filled generically: " + ", ".join(missing) + ")" if missing else ""))
-        print(messaging.sms_link(p["phone"], text) if a.sms else messaging.whatsapp_link(p["phone"], text))
+        print(messaging.sms_link(p["phone"], text))
 
     elif a.cmd == "crawl":
         domains = []

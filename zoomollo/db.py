@@ -109,12 +109,12 @@ CREATE TABLE IF NOT EXISTS templates (          -- text message templates
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS messages (           -- texts opened in WhatsApp / SMS
+CREATE TABLE IF NOT EXISTS messages (           -- texts sent from your own phone
     id INTEGER PRIMARY KEY,
     person_id INTEGER REFERENCES people(id) ON DELETE SET NULL,
     company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
     phone TEXT NOT NULL,
-    channel TEXT NOT NULL,                     -- whatsapp | sms
+    channel TEXT NOT NULL,                     -- sms (opened texting app) | phone (sent via QR / copy)
     template_id INTEGER REFERENCES templates(id) ON DELETE SET NULL,
     body TEXT NOT NULL,
     sent_at TEXT NOT NULL

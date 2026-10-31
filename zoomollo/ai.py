@@ -41,7 +41,7 @@ def available() -> bool:
         return False
 
 
-PROMPT = """You write short, friendly, professional text messages (WhatsApp/SMS) for a recruiter
+PROMPT = """You write short, friendly, professional text messages (SMS) for a recruiter
 reaching out to a hiring manager at a company.
 
 Write ONE message template for this goal: {goal}

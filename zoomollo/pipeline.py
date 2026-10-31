@@ -76,8 +76,10 @@ def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
                 db.add_contact(company_id, "phone", p.phone, "person", name=p.name,
                                title=p.title, source_url=page.url)
             if p.name and looks_like_name(p.name):
+                from .orgmap import clean_linkedin_url
                 if db.add_person(company_id, p.name, p.title, email=p.email, phone=p.phone,
-                                 source="website", source_url=page.url):
+                                 linkedin_url=clean_linkedin_url(p.linkedin or ""), source="website",
+                                 source_url=page.url):
                     found["people"] += 1
         for phone in page.phones:
             if db.add_contact(company_id, "phone", phone, "company", source_url=page.url):

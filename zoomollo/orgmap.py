@@ -91,3 +91,17 @@ def hiring_managers(people: list[dict], jobs: list[dict]) -> dict[int, list[dict
 
 def domain_of(url: str) -> str:
     return urlparse(url).netloc.lower().removeprefix("www.")
+
+
+def linkedin_search_url(name: str, company: str | None = None) -> str:
+    """LinkedIn's own people search, filled in. Opened in your browser; nothing is fetched by Zoomollo."""
+    from urllib.parse import quote
+    keywords = " ".join(x for x in [name, company] if x)
+    return "https://www.linkedin.com/search/results/people/?keywords=" + quote(keywords)
+
+
+def clean_linkedin_url(url: str) -> str | None:
+    """Accept only public profile links: https://www.linkedin.com/in/<handle>."""
+    import re
+    m = re.search(r"linkedin\.com/in/([A-Za-z0-9_\-%]+)", url or "")
+    return f"https://www.linkedin.com/in/{m.group(1)}" if m else None
