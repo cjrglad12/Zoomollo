@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zoomollo"
+version = "0.1.0"
+description = "Self-hosted contact discovery: crawl company sites and job boards for business emails and phone numbers."
+requires-python = ">=3.10"
+dependencies = [
+  "requests>=2.31",
+  "beautifulsoup4>=4.12",
+  "phonenumbers>=8.13",
+  "flask>=3.0",
+  "dnspython>=2.4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+zoomollo = "zoomollo.cli:main"
+
+[tool.setuptools]
+packages = ["zoomollo"]

@@ -1,0 +1,18 @@
+# Zoomollo settings
+# Paste your keys after the = signs, save this file, then restart Zoomollo.
+# Anything left blank is simply not used.
+
+# Web search: finds many more companies and people. Get a key at https://brave.com/search/api/
+BRAVE_API_KEY=
+
+# Alternatives to Brave (only one search key is needed):
+SERPAPI_KEY=
+SEARXNG_URL=
+
+# Optional: automatic email checking (pick one). https://neverbounce.com  https://zerobounce.net
+NEVERBOUNCE_API_KEY=
+ZEROBOUNCE_API_KEY=
+
+# Optional: push contacts into Loxo
+LOXO_AGENCY_SLUG=
+LOXO_API_KEY=
