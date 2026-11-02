@@ -151,9 +151,12 @@ def last_messaged(db: DB, phone: str) -> str | None:
 def outreach_list(db: DB, q: str = "", hiring_only: bool = True, include_messaged: bool = False,
                   limit: int = 200) -> list[dict]:
     """People with their own phone number, for stepping through outreach."""
+    from .offlimits import status as offlimits_status
     out = []
     for p in db.people(q=q, hiring_only=hiring_only, limit=10_000):
         if not p["phone"] or db.is_suppressed("+" + digits(p["phone"])):
+            continue
+        if offlimits_status(db, p["company_id"]).blocked:
             continue
         when = last_messaged(db, p["phone"])
         if when and not include_messaged:

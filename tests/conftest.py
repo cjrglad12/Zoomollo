@@ -34,6 +34,15 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+@pytest.fixture(autouse=True)
+def no_real_accounts(monkeypatch):
+    """Tests never touch real Loxo / mailbox accounts, even if the machine has them configured."""
+    import os
+    for k in list(os.environ):
+        if k.startswith(("LOXO_", "SMTP_", "IMAP_", "GMAIL_", "EMAIL_DAILY", "OFFLIMITS_", "MY_")):
+            monkeypatch.delenv(k, raising=False)
+
+
 @pytest.fixture
 def site(monkeypatch):
     srv = HTTPServer(("127.0.0.1", 0), Handler)

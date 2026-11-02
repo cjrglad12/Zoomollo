@@ -33,6 +33,12 @@ zoomollo search "vp sales"                  # search saved contacts
 zoomollo suppress jane@acme.com             # opt-out: delete + never store again
 zoomollo block staffco.com                  # block a staffing/recruiting firm the filters missed
 zoomollo text 12 --template 1               # filled-in text + texting-app link for person #12
+zoomollo loxo-sync                          # refresh Loxo clients / jobs / placements for off-limits checks
+zoomollo offlimits acme.com --set "partner's client" --until 2027-06-30
+zoomollo pipeline                           # companies by stage
+zoomollo due                                # follow-ups and next steps due today
+zoomollo send-due                           # send due follow-up emails from your mailbox
+zoomollo inbox                              # check your inbox for replies / bounces now
 zoomollo loxo-push                          # dry run; add --send to push for real
 ```
 
@@ -88,6 +94,34 @@ Each person's email shows its status: `found`, `guessed (try 3/10)`, `confirmed`
 - **Bounces in bulk**: paste bounce notices or a list into *Bounced emails* on the Prospect tab, or run `zoomollo bounces file.txt`. Only addresses already saved are acted on.
 - **After 10 wrong guesses** (or when no guesses are left) the person is marked `failed`.
 - A guess that later appears in a job post or on the site is upgraded to `found` automatically.
+
+## Pipeline, follow-ups and email
+
+The **Pipeline** tab is where business development happens.
+
+- **Stages:** Prospect → Contacted → Replied → Meeting → Fee agreement → Job order → Placement (or Not now / Lost). Each company card has a main contact, a next step with a due date, an owner, notes and a timeline of every email, text, reply and stage change. The first message moves a company to *Contacted*; a reply moves it to *Replied*.
+- **Follow-up sequences** (Messages tab): steps sent N days after you start someone, e.g. the built-in *Hiring manager follow-up*: day 0 email, day 3 text, day 7 email, day 14 last email. Start one from a person's row on the People tab (*Follow up*), for everyone shown at once, or from a company page. Text steps are skipped for people without a phone; email steps for people without an email.
+- **Due today** lists every follow-up step and next step that's due. Edit the message in place, then:
+  - **Open in email app** (no setup): your email app opens with the email written; or
+  - **Send** straight from Zoomollo through *your own* mailbox. For Gmail / Google Workspace, use **Connect Gmail** on the Pipeline tab: your address plus a Google [app password](https://myaccount.google.com/apppasswords) (needs 2-Step Verification). Zoomollo fills in Gmail's settings, tests the login without sending anything, and saves it only in `zoomollo-settings.txt` on your computer (never uploaded). *Send test email to myself* checks it end to end. Other mailboxes: set `SMTP_*` / `IMAP_*` in that file. Many Microsoft 365 business accounts block this, so use *Open in email app* there. *Send all due* sends them all, up to `EMAIL_DAILY_LIMIT` a day (default 40).
+- **Replies, unsubscribes and bounces:** with `IMAP_HOST` set, Zoomollo checks your inbox every 10 minutes. A reply stops that person's follow-ups and moves the company to *Replied*; out-of-office replies are ignored; "unsubscribe" blocks the address for good; a bounce marks the address bad and resends that step to the next email guess. Without it, change the stage yourself.
+- Every email ends with your name, company, **mailing address** and an unsubscribe line (required by US CAN-SPAM for sales email); set them under *Your details* on the Messages tab.
+
+## Off-limits (Loxo)
+
+Before any outreach Zoomollo checks whether a company is off-limits. With `LOXO_AGENCY_SLUG` and `LOXO_API_KEY` set (the slug, or your Loxo web address, both work), Zoomollo keeps a local copy of your Loxo data while it's open: a **quick sync** of jobs and placements every 6 hours (seconds) and a **full sync** of every company, status and block flag once a week (several minutes on large accounts; about 15 minutes for 24,000 companies). Both run in the background and can be started from the Pipeline tab. Then:
+
+| In Loxo | Zoomollo |
+|---|---|
+| Blocked (Loxo's block flag) | **Off-limits** |
+| Company status containing "Client" (e.g. *Current Client*) | **Off-limits** |
+| An open job (status like Active / Open / On hold) | **Off-limits**: active client |
+| A placement in the last 12 months (`OFFLIMITS_MONTHS`) | **Off-limits** |
+| Status like *Active Opportunity* | Warning: someone is working it (shows the owner) |
+| Only closed jobs / older placements | Warning: past client, warm re-engagement |
+| In Loxo, nothing else | Note: already in Loxo |
+
+You can also mark any company off-limits yourself (with an optional end date) on its page. Off-limits companies never appear in outreach queues, can't be started on follow-ups, aren't pushed to Loxo, and any follow-up already running stops; sending anything to them needs an explicit "send anyway". Companies are matched to Loxo by website, by the domain of the company's saved email addresses, then by name.
 
 ## Texting and templates
 

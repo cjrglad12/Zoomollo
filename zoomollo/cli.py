@@ -69,6 +69,18 @@ def main(argv: list[str] | None = None) -> int:
     tx.add_argument("person_id", type=int)
     tx.add_argument("--template", type=int, help="Template id (default: the first one)")
 
+    ls_ = sub.add_parser("loxo-sync", help="Refresh Loxo clients, jobs and placements for off-limits checks")
+    ls_.add_argument("--quick", action="store_true", help="Jobs and placements only (fast)")
+    ol = sub.add_parser("offlimits", help="Check, mark or clear a company as off-limits")
+    ol.add_argument("company", help="Domain or company key")
+    ol.add_argument("--set", metavar="REASON")
+    ol.add_argument("--until", help="YYYY-MM-DD")
+    ol.add_argument("--clear", action="store_true")
+    sub.add_parser("pipeline", help="Show the client pipeline by stage")
+    sub.add_parser("due", help="Follow-ups and next steps due today")
+    sub.add_parser("send-due", help="Send due follow-up emails from your mailbox (SMTP settings)")
+    sub.add_parser("inbox", help="Check your inbox for replies, unsubscribes and bounces (IMAP settings)")
+
     c = sub.add_parser("crawl", help="Crawl company websites for emails and phones")
     c.add_argument("domains", nargs="+", help="Domains, or @file.txt with one per line")
     c.add_argument("--max-pages", type=int, default=40)
@@ -212,6 +224,59 @@ def main(argv: list[str] | None = None) -> int:
         text, missing = messaging.render(tpl["body"], messaging.person_fields(db, p["id"]))
         print(text + ("\n(filled generically: " + ", ".join(missing) + ")" if missing else ""))
         print(messaging.sms_link(p["phone"], text))
+
+    elif a.cmd == "loxo-sync":
+        from . import loxo
+        print(json.dumps(loxo.sync(db, progress=print, full=not a.quick), indent=2))
+
+    elif a.cmd == "offlimits":
+        from .crawler import normalize_domain
+        from .offlimits import set_manual, status
+        row = db.conn.execute("SELECT id FROM companies WHERE key = ? OR domain = ?",
+                              (a.company, normalize_domain(a.company))).fetchone()
+        if not row:
+            print("Company not found.", file=sys.stderr)
+            return 1
+        if a.clear:
+            set_manual(db, row["id"], None)
+        elif a.set:
+            set_manual(db, row["id"], a.set, a.until)
+        st = status(db, row["id"])
+        print(f"{st.level or 'ok'}: {st.reason or 'no off-limits rules apply'}")
+
+    elif a.cmd == "pipeline":
+        from . import crm
+        for key, label in crm.STAGES:
+            cards = crm.board(db)[key]
+            if cards:
+                print(f"\n{label} ({len(cards)})")
+                for c in cards:
+                    extra = " | ".join(x for x in [c["contact_name"], c["next_step"] and f"{c['next_step']} ({c['due_date'] or 'no date'})",
+                                                   c["offlimits"].reason] if x)
+                    print(f"   {c['company_name'] or c['company_key']}" + (f" | {extra}" if extra else ""))
+
+    elif a.cmd == "due":
+        from . import crm
+        for it in crm.due_items(db):
+            if it["kind"] == "task":
+                print(f"[next step] {it['company_name']}: {it['next_step']} (due {it['due']})")
+            else:
+                print(f"[{it['channel']} step {it['step_no']}] {it['name']} ({it['company_name']}) -> {it['to']}"
+                      + (f" | {it['subject']}" if it["subject"] else ""))
+
+    elif a.cmd == "send-due":
+        from . import crm
+        if not crm.smtp_configured():
+            print("Add SMTP_HOST, SMTP_USER and SMTP_PASSWORD to zoomollo-settings.txt first.", file=sys.stderr)
+            return 1
+        print(json.dumps(crm.send_due_emails(db, pause=8.0, progress=print)))
+
+    elif a.cmd == "inbox":
+        from . import crm
+        if not crm.imap_configured():
+            print("Add IMAP_HOST (plus SMTP_USER / SMTP_PASSWORD) to zoomollo-settings.txt first.", file=sys.stderr)
+            return 1
+        print(json.dumps(crm.check_inbox(db)))
 
     elif a.cmd == "crawl":
         domains = []
