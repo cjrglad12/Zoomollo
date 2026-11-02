@@ -225,8 +225,11 @@ def default_path() -> str:
 MIGRATIONS = {
     "companies": {"city": "TEXT", "industry": "TEXT", "address": "TEXT", "phone": "TEXT",
                   "source": "TEXT",
-                  "offlimits_reason": "TEXT", "offlimits_until": "TEXT"},  # set by you in Zoomollo
-    "jobs": {"department": "TEXT", "description": "TEXT"},
+                  "offlimits_reason": "TEXT", "offlimits_until": "TEXT",  # set by you in Zoomollo
+                  "recruiters_seen": "INTEGER NOT NULL DEFAULT 0"},  # in-house recruiters spotted (not saved)
+    "jobs": {"department": "TEXT", "description": "TEXT",
+             "last_seen": "TEXT",                  # last time the role was still listed
+             "salary_max": "INTEGER"},             # yearly, parsed from the post when stated
     "templates": {"kind": "TEXT NOT NULL DEFAULT 'text'", "subject": "TEXT"},
     "loxo_companies": {"status_name": "TEXT", "blocked": "INTEGER NOT NULL DEFAULT 0", "blocked_until": "TEXT",
                        "owner": "TEXT"},
@@ -439,6 +442,9 @@ class DB:
         row = self.conn.execute("SELECT * FROM people WHERE company_id = ? AND name_key = ?",
                                 (company_id, key)).fetchone()
         if is_recruiting_title(title):  # never keep recruiting / talent-acquisition people
+            # ...but remember the company has one: it lowers the odds they need an agency.
+            self.conn.execute("UPDATE companies SET recruiters_seen = recruiters_seen + 1 WHERE id = ?",
+                              (company_id,))
             if row:
                 self.conn.execute("DELETE FROM people WHERE id = ?", (row["id"],))
                 if row["email"]:
@@ -502,16 +508,20 @@ class DB:
     def add_job(self, company_id: int, board: str, external_id: str, title: str,
                 location: str | None, url: str | None, posted_at: str | None,
                 description: str | None = None) -> None:
+        from .hiringscore import parse_salary
         from .orgmap import department
+        t = now()
         self.conn.execute(
             "INSERT INTO jobs (company_id, board, external_id, title, location, url, posted_at, "
-            "first_seen, department, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "first_seen, last_seen, department, description, salary_max) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(board, external_id) DO UPDATE SET "
             "location = COALESCE(jobs.location, excluded.location), "
             "posted_at = COALESCE(jobs.posted_at, excluded.posted_at), "
-            "description = COALESCE(excluded.description, jobs.description)",
-            (company_id, board, external_id, title, location, url, posted_at, now(), department(title),
-             (description or None) and description[:20000]),
+            "description = COALESCE(excluded.description, jobs.description), "
+            "salary_max = COALESCE(excluded.salary_max, jobs.salary_max), "
+            "last_seen = excluded.last_seen",
+            (company_id, board, external_id, title, location, url, posted_at, t, t, department(title),
+             (description or None) and description[:20000], parse_salary(description or "")),
         )
 
     def is_bad_email(self, email: str) -> bool:
