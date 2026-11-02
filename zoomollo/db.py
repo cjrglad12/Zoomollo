@@ -209,6 +209,28 @@ CREATE TABLE IF NOT EXISTS events (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_created ON events(created_at);
+-- Candidates (from Loxo or uploaded résumés). Résumés stay on this computer.
+CREATE TABLE IF NOT EXISTS candidates (
+    id INTEGER PRIMARY KEY,
+    source TEXT NOT NULL,                      -- loxo | upload
+    loxo_id INTEGER UNIQUE,
+    name TEXT,
+    title TEXT,
+    company TEXT,
+    city TEXT,
+    state TEXT,
+    email TEXT,
+    phone TEXT,
+    linkedin_url TEXT,
+    skills TEXT,                               -- skills / tags / summary from Loxo
+    profile TEXT,                              -- work history / education from Loxo
+    resume_text TEXT,
+    resume_name TEXT,
+    resume_status TEXT,                        -- fetched | none | failed: <why> | queued
+    resume_fetched_at TEXT,
+    updated_at TEXT,                           -- last change in Loxo
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT

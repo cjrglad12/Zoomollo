@@ -23,7 +23,8 @@ from urllib.parse import quote
 
 from .db import DB, now
 
-FIELDS = ["first_name", "last_name", "name", "title", "company", "city", "role", "my_name", "my_company"]
+FIELDS = ["first_name", "last_name", "name", "title", "company", "city", "role", "my_name", "my_company",
+          "candidate_title", "candidate_summary", "candidate_location"]  # candidate_* only in candidate pitches
 
 # Used when a field is unknown for a person, so messages still read naturally.
 FALLBACKS = {"first_name": "there", "name": "there", "company": "your company", "role": "new team member",
