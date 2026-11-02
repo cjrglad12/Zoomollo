@@ -90,15 +90,15 @@ def test_connect_gmail_in_the_app(tmp_path, monkeypatch):
 
 
 def test_business_details_default_from_example(tmp_path, monkeypatch):
-    """Norton's name and address come from the example file, even for an existing settings
-    file that doesn't mention them; your own values win."""
+    """The company name comes from the example file, even for an existing settings file
+    that doesn't mention it. No address is shipped: you enter your own."""
     f = tmp_path / settings.FILENAME
     f.write_text("LOXO_API_KEY=x\n")
     monkeypatch.setattr(settings, "settings_path", lambda: f)
     settings.load_settings()
     assert os.environ["MY_COMPANY"] == "Norton Digital Consulting"
-    assert os.environ["MY_ADDRESS"] == "100 Chesterfield Business Parkway, Suite 209, Chesterfield, MO 63005"
+    assert not os.environ.get("MY_ADDRESS")
     db = DB(str(tmp_path / "d.db"))
-    assert "100 Chesterfield Business Parkway, Suite 209, Chesterfield, MO 63005" in crm.footer(db)
-    db.set_setting("my_address", "1 Other St")
-    assert "1 Other St" in crm.footer(db) and "Chesterfield" not in crm.footer(db)
+    assert "Chesterfield" not in crm.footer(db)
+    db.set_setting("my_address", "1 Other St, Town, ST 00000")
+    assert "1 Other St, Town, ST 00000" in crm.footer(db)
