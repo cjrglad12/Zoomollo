@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import queue
 import threading
 from collections import deque
@@ -656,9 +657,11 @@ def create_app(db_path: str | None = None) -> Flask:
         crm.ensure_starters(db)
         return render("messages", SEND_MACRO + MESSAGES, templates=templates, tid=tid, queue=queue, q=q,
                       email_templates=db.templates("email"), all_templates=db.templates(None),
-                      sequences=crm.sequences(db), my_address=db.get_setting("my_address") or "",
-                      all_people=all_people, fields=messaging.FIELDS, my_name=db.get_setting("my_name") or "",
-                      my_company=db.get_setting("my_company") or "", ai=ai.available(), ai_help=ai.SETUP_HELP,
+                      sequences=crm.sequences(db),
+                      my_address=db.get_setting("my_address") or os.environ.get("MY_ADDRESS", ""),
+                      all_people=all_people, fields=messaging.FIELDS, my_name=db.get_setting("my_name") or os.environ.get("MY_NAME", ""),
+                      my_company=db.get_setting("my_company") or os.environ.get("MY_COMPANY", ""),
+                      ai=ai.available(), ai_help=ai.SETUP_HELP,
                       draft=extra.get("draft"), draft_error=extra.get("draft_error"),
                       goal=extra.get("goal", ""), tone=extra.get("tone", "warm and direct"),
                       length=extra.get("length", "short"))

@@ -65,18 +65,27 @@ def save_values(values: dict[str, str]) -> Path:
     return path
 
 
-def load_settings() -> Path | None:
-    path = settings_path()
-    if not path:
-        apply_presets()
-        return None
+def _read(path: Path) -> dict[str, str]:
+    out = {}
     for line in path.read_text(encoding="utf-8-sig").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
         key, value = key.strip(), value.strip().strip('"').strip("'")
-        if key and value and not os.environ.get(key):
-            os.environ[key] = value
+        if key and value:
+            out[key] = value
+    return out
+
+
+def load_settings() -> Path | None:
+    """Your zoomollo-settings.txt first; then any defaults filled in in the
+    example file (e.g. business name and address) for keys you haven't set."""
+    path = settings_path()
+    example = Path(__file__).resolve().parent.parent / "zoomollo-settings.example.txt"
+    for source in [p for p in (path, example) if p and p.is_file()]:
+        for key, value in _read(source).items():
+            if not os.environ.get(key):
+                os.environ[key] = value
     apply_presets()
     return path
