@@ -69,7 +69,8 @@ def main(argv: list[str] | None = None) -> int:
     tx.add_argument("person_id", type=int)
     tx.add_argument("--template", type=int, help="Template id (default: the first one)")
 
-    sub.add_parser("loxo-sync", help="Refresh Loxo clients, jobs and placements for off-limits checks")
+    ls_ = sub.add_parser("loxo-sync", help="Refresh Loxo clients, jobs and placements for off-limits checks")
+    ls_.add_argument("--quick", action="store_true", help="Jobs and placements only (fast)")
     ol = sub.add_parser("offlimits", help="Check, mark or clear a company as off-limits")
     ol.add_argument("company", help="Domain or company key")
     ol.add_argument("--set", metavar="REASON")
@@ -226,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
 
     elif a.cmd == "loxo-sync":
         from . import loxo
-        print(json.dumps(loxo.sync(db, progress=print), indent=2))
+        print(json.dumps(loxo.sync(db, progress=print, full=not a.quick), indent=2))
 
     elif a.cmd == "offlimits":
         from .crawler import normalize_domain

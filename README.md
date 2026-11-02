@@ -109,7 +109,7 @@ The **Pipeline** tab is where business development happens.
 
 ## Off-limits (Loxo)
 
-Before any outreach Zoomollo checks whether a company is off-limits. With `LOXO_AGENCY_SLUG` and `LOXO_API_KEY` set (the slug, or your Loxo web address, both work), **Sync with Loxo** on the Pipeline tab copies your Loxo companies, jobs and placements. Then:
+Before any outreach Zoomollo checks whether a company is off-limits. With `LOXO_AGENCY_SLUG` and `LOXO_API_KEY` set (the slug, or your Loxo web address, both work), Zoomollo keeps a local copy of your Loxo data while it's open: a **quick sync** of jobs and placements every 6 hours (seconds) and a **full sync** of every company, status and block flag once a week (several minutes on large accounts; about 15 minutes for 24,000 companies). Both run in the background and can be started from the Pipeline tab. Then:
 
 | In Loxo | Zoomollo |
 |---|---|

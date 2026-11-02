@@ -433,8 +433,9 @@ PIPELINE = OL_MACRO + """<div class="grid">
 <form method="post" action="{{ url_for('pipeline_tools') }}"><input type="hidden" name="action" value="inbox"><button>Check now</button></form>
 {% else %}<p>Mark replies with the stage menu below. Add IMAP_HOST to <b>zoomollo-settings.txt</b> to have Zoomollo spot replies and bounces in your inbox for you.</p>{% endif %}</div>
 <div class="card"><h3>Loxo off-limits</h3>{% if loxo_on %}<p>{{ loxo_count }} Loxo companies{% if loxo_synced %}, synced {{ loxo_synced[:16].replace('T', ' ') }}{% else %}, not synced yet{% endif %}. Active clients and recent placements are blocked from outreach.</p>
-<form method="post" action="{{ url_for('pipeline_tools') }}"><input type="hidden" name="action" value="loxo"><button>Sync with Loxo</button></form>
-<p class="muted" style="font-size:12px;margin-top:6px">Runs in the background; large accounts take a few minutes. Progress shows below.</p>
+<form method="post" action="{{ url_for('pipeline_tools') }}" class="row"><button name="action" value="loxo">Quick sync</button>
+<button name="action" value="loxo_full" class="ghost" title="All companies, statuses and block flags; takes several minutes on big accounts">Full sync</button></form>
+<p class="muted" style="font-size:12px;margin-top:6px">Runs by itself: jobs and placements every 6 hours, everything weekly{% if loxo_full %} (last full {{ loxo_full[:10] }}){% endif %}.</p>
 {% else %}<p>Add LOXO_AGENCY_SLUG and LOXO_API_KEY to <b>zoomollo-settings.txt</b> so active clients and recent placements are blocked automatically. Until then, mark companies off-limits on their page.</p>{% endif %}</div>
 </div>
 {% if log %}<div class="log card" style="margin-top:12px">{{ log|join('\n') }}</div>{% endif %}
@@ -489,12 +490,7 @@ def create_app(db_path: str | None = None) -> Flask:
             action, item, opts = tasks.get()
             state["busy"] += 1
             try:
-                if action == "loxo_sync":
-                    from . import loxo
-                    r = loxo.sync(db, progress=log.appendleft)
-                    log.appendleft(f"✓ Loxo synced: {r['companies']} companies, {r['jobs']} jobs, "
-                                   f"{r['placements']} placements")
-                elif action == "inbox":
+                if action == "inbox":
                     from . import crm
                     r = crm.check_inbox(db)
                     if r["reply"] or r["bounce"] or r["unsubscribe"] or opts.get("loud"):
@@ -542,6 +538,37 @@ def create_app(db_path: str | None = None) -> Flask:
                 tasks.put(("inbox", "inbox", {}))
 
     threading.Thread(target=inbox_timer, daemon=True).start()
+
+    loxo_busy = threading.Lock()
+
+    def run_loxo_sync(full: bool | None):
+        """Loxo syncs get their own thread: a full sync of a big account takes minutes."""
+        from . import loxo
+        if not loxo_busy.acquire(blocking=False):
+            log.appendleft("Loxo sync already running")
+            return
+        try:
+            db = DB(db_path)
+            r = loxo.auto_sync(db, progress=log.appendleft) if full is None else \
+                loxo.sync(db, progress=log.appendleft, full=full)
+            if r:
+                log.appendleft(f"✓ Loxo {'full' if r['full'] else 'quick'} sync: {r['jobs']} jobs, "
+                               f"{r['placements']} placements" + (f", {r['companies']} companies" if r["full"] else ""))
+        except Exception as e:  # noqa: BLE001
+            log.appendleft(f"✗ Loxo sync failed: {e}")
+        finally:
+            loxo_busy.release()
+
+    def loxo_timer():
+        import time
+        from . import loxo
+        time.sleep(5)
+        while True:
+            if loxo.configured():
+                run_loxo_sync(None)
+            time.sleep(3600)
+
+    threading.Thread(target=loxo_timer, daemon=True).start()
 
     def render(tab, tpl, **ctx):
         db = DB(db_path)
@@ -792,15 +819,17 @@ def create_app(db_path: str | None = None) -> Flask:
                       due_emails=sum(1 for i in due if i["kind"] == "step" and i["channel"] == "email"),
                       imap=crm.imap_configured(), inbox_at=db.get_setting("inbox_checked_at"),
                       loxo_on=loxo.configured(), loxo_synced=db.get_setting("loxo_synced_at"),
+                      loxo_full=db.get_setting("loxo_full_synced_at"),
                       loxo_count=db.conn.execute("SELECT COUNT(*) FROM loxo_companies").fetchone()[0],
                       log=[ln for ln in list(log)[:8] if any(w in ln for w in ("Loxo", "Inbox", "Sent", "✗", "✓ "))])
 
     @app.post("/pipeline/tools")
     def pipeline_tools():
         action = request.form.get("action")
-        if action == "loxo":
-            tasks.put(("loxo_sync", "Loxo", {}))
-            log.appendleft("queued: Loxo sync")
+        if action in ("loxo", "loxo_full"):
+            full = action == "loxo_full"
+            threading.Thread(target=run_loxo_sync, args=(full,), daemon=True).start()
+            log.appendleft(f"✓ Loxo {'full' if full else 'quick'} sync started")
         elif action == "inbox":
             tasks.put(("inbox", "inbox", {"loud": True}))
             log.appendleft("queued: inbox check")

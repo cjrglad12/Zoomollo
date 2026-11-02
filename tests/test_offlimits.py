@@ -53,7 +53,7 @@ def setup(tmp_path):
 
 def test_sync_and_rules(tmp_path):
     db, ids, r = setup(tmp_path)
-    assert r == {"companies": 4, "jobs": 2, "placements": 2}
+    assert r == {"companies": 4, "jobs": 2, "placements": 2, "full": True}
     acme, beta, gamma, delta, new = (status(db, ids[k]) for k in ("acme.com", "betaair.com", "gamma.com", "delta.com", "new.com"))
     assert acme.blocked and "1 open job" in acme.reason             # matched by domain
     assert beta.blocked and "Placed into" in beta.reason             # matched by name ("Beta Air Inc" ~ "Beta Air")
@@ -157,3 +157,29 @@ def test_loxo_get_retries_dropped_connections(monkeypatch):
     monkeypatch.setattr(c.session, "get", flaky)
     monkeypatch.setattr("time.sleep", lambda s: None)
     assert c.get("companies") == {"ok": True} and len(calls) == 3
+
+
+def test_quick_sync_keeps_company_details(tmp_path):
+    db, ids, _ = setup(tmp_path)
+    db.conn.execute("UPDATE loxo_companies SET status_name = 'Current Client', owner = 'Casey' WHERE loxo_id = 4")
+    db.commit()
+    fake = FakeLoxo()
+    r = loxo.sync(db, client=fake, full=False)
+    assert r["full"] is False and not any(ep == "companies" for ep, _ in fake.calls)   # no company scan
+    row = db.conn.execute("SELECT * FROM loxo_companies WHERE loxo_id = 4").fetchone()
+    assert row["status_name"] == "Current Client" and row["owner"] == "Casey"          # kept from full sync
+    assert status(db, ids["acme.com"]).blocked                                         # jobs refreshed
+
+
+def test_auto_sync_schedule(tmp_path, monkeypatch):
+    db, ids, _ = setup(tmp_path)
+    monkeypatch.setenv("LOXO_AGENCY_SLUG", "acme")
+    monkeypatch.setenv("LOXO_API_KEY", "k")
+    calls = []
+    monkeypatch.setattr(loxo, "sync", lambda db, progress=None, full=True: calls.append(full) or {"full": full})
+    assert loxo.auto_sync(db) is None                       # full + quick both fresh
+    db.set_setting("loxo_synced_at", "2000-01-01T00:00:00")
+    loxo.auto_sync(db)
+    db.set_setting("loxo_full_synced_at", "2000-01-01T00:00:00")
+    loxo.auto_sync(db)
+    assert calls == [False, True]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 from datetime import datetime, timezone
 
 SCHEMA = """
@@ -236,6 +237,9 @@ MIGRATIONS = {
 }
 
 
+_SETUP_LOCK = threading.Lock()
+
+
 class DB:
     def __init__(self, path: str | None = None):
         self.path = path or default_path()
@@ -243,13 +247,18 @@ class DB:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
-        self.conn.executescript(SCHEMA)
-        for table, cols in MIGRATIONS.items():
-            have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
-            for col, typ in cols.items():
-                if col not in have:
-                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
-        self.conn.commit()
+        with _SETUP_LOCK:  # the web page and background jobs may open a new database at the same moment
+            self.conn.executescript(SCHEMA)
+            for table, cols in MIGRATIONS.items():
+                have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+                for col, typ in cols.items():
+                    if col not in have:
+                        try:
+                            self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+                        except sqlite3.OperationalError as e:
+                            if "duplicate column" not in str(e):  # another process added it first
+                                raise
+            self.conn.commit()
         if self.conn.execute("PRAGMA user_version").fetchone()[0] < 2:
             self.purge_excluded()
             self.conn.execute("PRAGMA user_version = 2")
