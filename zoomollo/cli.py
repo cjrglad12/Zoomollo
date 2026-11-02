@@ -76,6 +76,14 @@ def main(argv: list[str] | None = None) -> int:
     ol.add_argument("--set", metavar="REASON")
     ol.add_argument("--until", help="YYYY-MM-DD")
     ol.add_argument("--clear", action="store_true")
+    dk = sub.add_parser("desk", help="Show or set your niche (roles you place, areas, salary floor)")
+    dk.add_argument("--titles", help='e.g. "HVAC technician, service manager"')
+    dk.add_argument("--exclude", help='e.g. "intern, driver"')
+    dk.add_argument("--locations", help='e.g. "Austin, TX; MO"')
+    dk.add_argument("--min-salary")
+    tp = sub.add_parser("top", help="Companies ranked by hiring score")
+    tp.add_argument("--limit", type=int, default=20)
+    tp.add_argument("--niche", action="store_true", help="Only companies with roles in your niche")
     sub.add_parser("pipeline", help="Show the client pipeline by stage")
     sub.add_parser("due", help="Follow-ups and next steps due today")
     sub.add_parser("send-due", help="Send due follow-up emails from your mailbox (SMTP settings)")
@@ -243,6 +251,22 @@ def main(argv: list[str] | None = None) -> int:
             set_manual(db, row["id"], a.set, a.until)
         st = status(db, row["id"])
         print(f"{st.level or 'ok'}: {st.reason or 'no off-limits rules apply'}")
+
+    elif a.cmd == "desk":
+        from . import hiringscore
+        d = hiringscore.load_desk(db)
+        if any(v is not None for v in (a.titles, a.exclude, a.locations, a.min_salary)):
+            d = hiringscore.save_desk(db, a.titles if a.titles is not None else ", ".join(d.titles),
+                                      a.exclude if a.exclude is not None else ", ".join(d.exclude),
+                                      a.locations if a.locations is not None else "; ".join(d.locations),
+                                      a.min_salary if a.min_salary is not None else d.min_salary)
+        print(json.dumps(d.__dict__, indent=2))
+
+    elif a.cmd == "top":
+        from . import hiringscore
+        for sc, co in hiringscore.ranked(db, niche_only=a.niche, limit=a.limit):
+            why = sc.offlimits.reason if sc.offlimits.blocked else " · ".join(sc.top_reasons)
+            print(f"{sc.total:>3}  {co['name'] or co['key']}  | {why}")
 
     elif a.cmd == "pipeline":
         from . import crm

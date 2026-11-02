@@ -35,6 +35,8 @@ LINKEDIN_MACRO = """{% macro linkedin(p) %}<div class="listack">
 <input name="url" placeholder="linkedin.com/in/…" required><button>Save</button></form></details>{% endif %}
 </div>{% endmacro %}"""
 
+SCORE_MACRO = """{% macro scorechip(sc) %}<span class="score s{{ 3 if sc.total >= 60 else 2 if sc.total >= 30 else 1 if sc.total > 0 else 0 }}" title="Hiring score">{{ sc.total }}</span>{% endmacro %}"""
+
 OL_MACRO = """{% macro olbadge(st) %}{% if st and st.level %}<span class="chip ol-{{ st.level }}" title="{{ st.reason }}">{{ {'blocked': '⛔ Off-limits', 'warn': 'Past client', 'info': 'In Loxo'}[st.level] }}</span>{% endif %}{% endmacro %}"""
 
 PAGE = """<!doctype html>
@@ -133,7 +135,10 @@ html.mobile td.wraptext{min-width:0}
 html.mobile form.fb button{padding:6px 12px;font-size:14px;margin:4px 4px 0 0}
 html.mobile .tpl textarea{min-height:220px}html.mobile .sub{font-size:14px}html.mobile h2{font-size:21px}
 html.forced-mobile body{max-width:480px;margin:0 auto;border-left:1px solid var(--line);border-right:1px solid var(--line);min-height:100vh}
-td.em{white-space:normal;min-width:230px;max-width:300px}.ol-blocked{background:var(--bad-bg);color:var(--bad-ink)}.ol-warn{background:var(--hm);color:var(--hmink)}
+td.em{white-space:normal;min-width:230px;max-width:300px}.score{display:inline-block;min-width:38px;text-align:center;font-weight:700;border-radius:8px;padding:3px 6px;background:var(--chip)}
+.score.s3{background:var(--ok-bg);color:var(--ok-ink)}.score.s2{background:var(--hm);color:var(--hmink)}.score.s0{opacity:.55}
+.why{font-size:13px;color:var(--muted)}.why b{color:var(--ink);font-weight:600}.fit{background:var(--ok-bg);color:var(--ok-ink)}
+.ol-blocked{background:var(--bad-bg);color:var(--bad-ink)}.ol-warn{background:var(--hm);color:var(--hmink)}
 .board{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(230px,1fr);gap:12px;overflow-x:auto;padding-bottom:6px}
 .col h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
 .pcard{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:14px}
@@ -244,7 +249,7 @@ PEOPLE = EMAIL_MACRO + LINKEDIN_MACRO + OL_MACRO + """<form class="bar"><input t
 <input type="hidden" name="sequence" value="{{ sequences[0].id }}"><button class="ghost" style="background:transparent;color:var(--accent);border:1px solid var(--line);margin-top:4px" title="Start: {{ sequences[0].name }}">Follow up</button></form>{% endif %}</td></tr>
 {% else %}<tr><td colspan="7">No people yet. Start on the <a href="{{ url_for('find') }}">Prospect</a> tab.</td></tr>{% endfor %}</table></div>"""
 
-COMPANY = EMAIL_MACRO + LINKEDIN_MACRO + OL_MACRO + """<h2>{{ co.name or co.key }}</h2>
+COMPANY = EMAIL_MACRO + LINKEDIN_MACRO + OL_MACRO + SCORE_MACRO + """<h2>{{ co.name or co.key }}</h2>
 <form class="fb" method="post" action="{{ url_for('block', cid=co.id) }}" style="float:right"
  onsubmit="return confirm('Block this company as staffing/recruiting? Everything saved for it is deleted.')">
 <button class="no">Block (staffing / recruiting)</button></form>
@@ -289,6 +294,11 @@ COMPANY = EMAIL_MACRO + LINKEDIN_MACRO + OL_MACRO + """<h2>{{ co.name or co.key 
 {% elif loxo_on %}Not found in Loxo{% if loxo_synced %} (synced {{ loxo_synced[:10] }}){% else %} (not synced yet: see the Pipeline tab){% endif %}.{% else %}Loxo isn't connected, so only your own off-limits marks apply.{% endif %}</p>
 </div></div>
 
+<div class="section"><b>Hiring score</b></div>
+<div class="card" style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap"><div style="font-size:30px">{{ scorechip(score) }}</div>
+<div style="flex:1;min-width:220px">{% for pts, why in score.reasons %}<div class="why"><b>{{ '%+d' % pts if pts else '·' }}</b> {{ why }}</div>{% else %}<div class="why">No open roles found yet.</div>{% endfor %}
+{% if not desk_set %}<div class="why" style="margin-top:6px">Tip: set <a href="{{ url_for('companies') }}">My desk</a> so only roles you place count.</div>{% endif %}</div></div>
+
 <div class="section"><b>Org map</b> <span class="muted">· {{ people|length }} people</span></div>
 {% if people %}<div class="org">{% for d, ps in org %}<div class="card dept"><h4>{{ depts[d] }}</h4>
 {% for p in ps %}<div class="person"><div class="n">{{ p.name }} {% if p.hiring_for %}<span class="chip hm">hiring</span>{% endif %}</div>
@@ -312,11 +322,26 @@ COMPANY = EMAIL_MACRO + LINKEDIN_MACRO + OL_MACRO + """<h2>{{ co.name or co.key 
 <td>{% if r.source_url and r.source_url.startswith('http') %}<a href="{{ r.source_url }}" target="_blank" rel="noopener">page</a>{% else %}{{ r.source_url or '' }}{% endif %}</td></tr>
 {% else %}<tr><td colspan="3">None.</td></tr>{% endfor %}</table></div>"""
 
-COMPANIES = """<form class="bar"><input type="search" name="q" value="{{ q }}" placeholder="Company, city, industry…"><button>Search</button></form>
-<div class="wrap"><table><tr><th>Company</th><th>City</th><th>Industry</th><th>People</th><th>Emails</th><th>Phones</th><th>Open jobs</th><th>Email format</th></tr>
-{% for c in rows %}<tr><td><a href="{{ url_for('company', cid=c.id) }}">{{ c.name or c.key }}</a>{% if c.domain %} <span class="muted">{{ c.domain }}</span>{% endif %}</td>
-<td>{{ c.city or '' }}</td><td>{{ c.industry or '' }}</td><td>{{ c.people }}</td><td>{{ c.emails }}</td><td>{{ c.phones }}</td><td>{{ c.open_jobs }}</td>
-<td class="v">{{ c.email_pattern or '' }}</td></tr>{% else %}<tr><td colspan="8">No companies yet.</td></tr>{% endfor %}</table></div>"""
+DESK_CARD = """<details class="card" {{ 'open' if not desk.is_set }} style="margin-bottom:14px"><summary><b>My desk</b>
+<span class="muted">{% if desk.is_set %}· {{ desk.titles|join(', ') or 'any role' }}{% if desk.locations %} · {{ desk.locations|join('; ') }}{% endif %}{% if desk.min_salary %} · ${{ '{:,}'.format(desk.min_salary) }}+{% endif %}{% else %}· set your niche so the score focuses on roles you place{% endif %}</span></summary>
+<form method="post" action="{{ url_for('desk_post') }}" style="margin-top:10px"><div class="grid">
+<label>Roles you place <span class="muted">(comma or one per line)</span><textarea name="titles" style="width:100%;min-height:70px" placeholder="HVAC technician, service manager, estimator">{{ desk.titles|join(', ') }}</textarea></label>
+<label>Roles to skip<textarea name="exclude" style="width:100%;min-height:70px" placeholder="intern, driver">{{ desk.exclude|join(', ') }}</textarea></label>
+<label>Locations you cover <span class="muted">(blank = anywhere)</span><textarea name="locations" style="width:100%;min-height:70px" placeholder="Austin, TX; Dallas, TX; MO; remote">{{ desk.locations|join('; ') }}</textarea></label>
+<label>Minimum salary <span class="muted">(only used when a post states pay)</span><input name="min_salary" value="{{ desk.min_salary or '' }}" placeholder="60000" style="width:100%"></label>
+</div><button style="margin-top:10px">Save my desk</button></form></details>"""
+
+COMPANIES = SCORE_MACRO + OL_MACRO + """{{ desk_card|safe }}
+<form class="bar"><input type="search" name="q" value="{{ q }}" placeholder="Company, city, industry…">
+<label class="chip" style="padding:8px 10px"><input type="checkbox" name="niche" value="1" {{ 'checked' if niche }} style="padding:0"> Only with roles in my niche</label><button>Search</button></form>
+<div class="wrap"><table><tr><th>Score</th><th>Company</th><th>Why</th><th>Roles</th><th>People</th><th>Stage</th></tr>
+{% for sc, c in rows %}<tr><td>{{ scorechip(sc) }}</td>
+<td><a href="{{ url_for('company', cid=c.id) }}"><b>{{ c.name or c.key }}</b></a>{% if c.city %}<br><span class="muted">{{ c.city }}</span>{% endif %}</td>
+<td class="wraptext why">{% if sc.offlimits.blocked %}{{ olbadge(sc.offlimits) }} {{ sc.offlimits.reason }}{% else %}{{ sc.top_reasons|join(' · ') or 'no open roles found' }}{% endif %}</td>
+<td>{% if sc.fit_roles %}<span class="chip fit">{{ sc.fit_roles|length }} fit</span>{% endif %}{% if sc.other_roles %} <span class="chip">{{ sc.other_roles }} other</span>{% endif %}</td>
+<td>{{ counts.get(c.id, 0) }}</td>
+<td>{% if sc.stage %}<span class="chip">{{ stage_names[sc.stage] }}</span>{% elif not sc.offlimits.blocked and sc.total %}<form class="fb" method="post" action="{{ url_for('pipeline_post', cid=c.id) }}"><input type="hidden" name="action" value="add"><button class="ghost">+ Pipeline</button></form>{% endif %}</td></tr>
+{% else %}<tr><td colspan="6">{% if niche %}No companies with open roles in your niche yet.{% else %}No companies yet.{% endif %}</td></tr>{% endfor %}</table></div>"""
 
 CONTACTS = """<form class="bar"><input type="search" name="q" value="{{ q }}" placeholder="Search name, email, title, company…">
 <select name="type"><option value="">Emails + phones</option>{% for t in ['email','phone'] %}<option {{ 'selected' if t==type_ }}>{{ t }}</option>{% endfor %}</select>
@@ -426,7 +451,7 @@ var zmT;function zmQR(){clearTimeout(zmT);zmT=setTimeout(function(){
 </script>{% endif %}
 {% if history %}<div class="section"><b>Sent before</b></div>{% for m in history %}<div class="preview" style="margin-bottom:8px"><span class="muted">{{ m.sent_at[:16].replace('T',' ') }} · {{ m.channel }}</span><br>{{ m.body }}</div>{% endfor %}{% endif %}"""
 
-PIPELINE = OL_MACRO + """<div class="grid">
+PIPELINE = OL_MACRO + SCORE_MACRO + """<div class="grid">
 <div class="card" id="email"><h3>Email</h3>
 {% if email_msg %}<div class="{{ 'warn' if email_bad else 'preview' }}" style="margin-bottom:10px">{{ email_msg }}</div>{% endif %}
 {% if smtp %}<p>Sending from your mailbox (<b>{{ smtp_user }}</b>). {{ sent_today }} of {{ daily_limit }} sent today.</p>
@@ -456,6 +481,12 @@ Workspace accounts: your admin may need to allow app passwords. Microsoft 365: u
 </div>
 {% if log %}<div class="log card" style="margin-top:12px">{{ log|join('\n') }}</div>{% endif %}
 
+{% if best %}<div class="section"><b>Best accounts to work next</b> <span class="muted">· highest hiring score, not in your pipeline</span></div>
+<div class="wrap"><table><tr><th>Score</th><th>Company</th><th>Why</th><th></th></tr>
+{% for sc, c in best %}<tr><td>{{ scorechip(sc) }}</td><td><a href="{{ url_for('company', cid=c.id) }}"><b>{{ c.name or c.key }}</b></a></td>
+<td class="wraptext why">{{ sc.top_reasons|join(' · ') }}</td>
+<td><form class="fb" method="post" action="{{ url_for('pipeline_post', cid=c.id) }}"><input type="hidden" name="action" value="add"><button>+ Pipeline</button></form></td></tr>{% endfor %}</table></div>{% endif %}
+
 <div class="section"><b>Due today</b> <span class="muted">· {{ due|length }}</span></div>
 <div class="wrap"><table><tr><th>Who</th><th>What</th><th></th></tr>
 {% for it in due %}{% if it.kind == 'task' %}<tr><td><a href="{{ url_for('company', cid=it.company_id) }}">{{ it.company_name }}</a></td>
@@ -483,11 +514,13 @@ Workspace accounts: your admin may need to allow app passwords. Microsoft 365: u
 <select name="stage" onchange="this.form.submit()">{% for k2, l2 in stages %}<option value="{{ k2 }}" {{ 'selected' if k2 == k }}>{{ l2 }}</option>{% endfor %}</select></form></div>
 {% else %}<p class="muted" style="font-size:13px">—</p>{% endfor %}</div>{% endif %}{% endfor %}</div>"""
 
-JOBS = """<form class="bar"><input type="search" name="q" value="{{ q }}" placeholder="Role, company, city, contact…"><button>Search</button>
+JOBS = """<form class="bar"><input type="search" name="q" value="{{ q }}" placeholder="Role, company, city, contact…">
+<label class="chip" style="padding:8px 10px"><input type="checkbox" name="niche" value="1" {{ 'checked' if niche }} style="padding:0"> Only my niche</label><button>Search</button>
 <a class="btn" href="{{ url_for('export_hiring', q=q) }}">Export roles × contacts CSV</a></form>
 <div class="wrap"><table><tr><th>Company</th><th>Role</th><th>Location</th><th>Source</th><th>Best contacts</th></tr>
 {% for j in rows %}<tr><td><a href="{{ url_for('company', cid=j.company_id) }}">{{ j.company_name or j.company_key }}</a></td>
-<td>{% if j.url %}<a href="{{ j.url }}" target="_blank" rel="noopener">{{ j.title }}</a>{% else %}{{ j.title }}{% endif %}</td>
+<td>{% if j.url %}<a href="{{ j.url }}" target="_blank" rel="noopener">{{ j.title }}</a>{% else %}{{ j.title }}{% endif %}
+{% if fits[j.id][0] %} <span class="chip fit">fits my desk</span>{% elif desk_set %} <span class="muted" style="font-size:12px">{{ fits[j.id][1] }}</span>{% endif %}</td>
 <td>{{ j.location or '' }}</td><td><span class="chip">{{ j.board }}</span></td>
 <td class="wraptext">{% for m in matches.get(j.id, [])[:3] %}<div><span class="reason">{{ m.reason }}</span> {{ m.name or '' }}
 <span class="v">{{ m.email or m.value or '' }}</span></div>{% else %}<span class="muted">none yet</span>{% endfor %}</td></tr>
@@ -815,7 +848,10 @@ def create_app(db_path: str | None = None) -> Flask:
         enrollments = db.conn.execute(
             "SELECT e.*, p.name, s.name AS sequence_name FROM enrollments e JOIN people p ON p.id = e.person_id "
             "JOIN sequences s ON s.id = e.sequence_id WHERE e.company_id = ? ORDER BY e.id DESC", (cid,)).fetchall()
+        from . import hiringscore
+        desk = hiringscore.load_desk(db)
         return render("companies", COMPANY, co=co, people=ppl, org=org, jobs=jobs,
+                      score=hiringscore.score_all(db, desk)[cid], desk_set=desk.is_set,
                       matches=matches, contacts=contacts, card=crm.card(db, cid), stages=crm.STAGES,
                       sequences=crm.sequences(db), enrollments=enrollments, timeline=crm.timeline(db, cid),
                       offl=offlimits_status(db, cid), loxo_row=loxo_match(db, cid), loxo_on=loxo.configured(),
@@ -830,7 +866,9 @@ def create_app(db_path: str | None = None) -> Flask:
         crm.ensure_starters(db)
         due = crm.due_items(db)
         board = crm.board(db)
-        return render("pipeline_page", PIPELINE, due=due, board=board, stages=crm.STAGES, today=crm.today(),
+        from . import hiringscore
+        best = [x for x in hiringscore.ranked(db, exclude_pipeline=True, limit=8) if x[0].total > 0]
+        return render("pipeline_page", PIPELINE, due=due, board=board, stages=crm.STAGES, today=crm.today(), best=best,
                       total=sum(len(v) for v in board.values()), smtp=crm.smtp_configured(),
                       smtp_user=os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USER"),
                       sent_today=crm.sent_today(db), daily_limit=crm.daily_limit(),
@@ -995,12 +1033,26 @@ def create_app(db_path: str | None = None) -> Flask:
                        request.form.get("until") or None)
         return redirect(url_for("company", cid=cid))
 
+    def desk_card(db):
+        from .hiringscore import load_desk
+        return render_template_string(DESK_CARD, desk=load_desk(db))
+
     @app.get("/companies")
     def companies():
-        q = request.args.get("q", "").lower()
-        rows = [c for c in DB(db_path).companies()
-                if not q or any(q in (c[k] or "").lower() for k in ("key", "name", "city", "industry"))]
-        return render("companies", COMPANIES, rows=rows, q=q)
+        from . import crm, hiringscore
+        db = DB(db_path)
+        q, niche = request.args.get("q", ""), bool(request.args.get("niche"))
+        rows = hiringscore.ranked(db, niche_only=niche, q=q)
+        counts = {r[0]: r[1] for r in db.conn.execute("SELECT company_id, COUNT(*) FROM people GROUP BY company_id")}
+        return render("companies", COMPANIES, rows=rows, q=q, niche=niche, counts=counts,
+                      stage_names=crm.STAGE_NAMES, desk_card=desk_card(db))
+
+    @app.post("/desk")
+    def desk_post():
+        from .hiringscore import save_desk
+        f = request.form
+        save_desk(DB(db_path), f.get("titles", ""), f.get("exclude", ""), f.get("locations", ""), f.get("min_salary"))
+        return redirect(request.referrer or url_for("companies"))
 
     @app.get("/contacts")
     def contacts():
@@ -1011,8 +1063,16 @@ def create_app(db_path: str | None = None) -> Flask:
     def jobs():
         q = request.args.get("q", "")
         db = DB(db_path)
+        from .hiringscore import job_fit, load_desk
+        desk = load_desk(db)
+        niche = bool(request.args.get("niche"))
+        cities = {r["id"]: r["city"] for r in db.conn.execute("SELECT id, city FROM companies")}
         rows = db.jobs(q)
-        return render("jobs", JOBS, rows=rows, q=q, matches={j["id"]: db.job_contacts(j["id"]) for j in rows})
+        fits = {j["id"]: job_fit(j["title"], j["location"], cities.get(j["company_id"]), j["salary_max"], desk) for j in rows}
+        if niche:
+            rows = [j for j in rows if fits[j["id"]][0]]
+        return render("jobs", JOBS, rows=rows, q=q, niche=niche, fits=fits, desk_set=desk.is_set,
+                      matches={j["id"]: db.job_contacts(j["id"]) for j in rows})
 
     @app.get("/export.csv")
     def export():

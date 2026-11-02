@@ -95,6 +95,25 @@ Each person's email shows its status: `found`, `guessed (try 3/10)`, `confirmed`
 - **After 10 wrong guesses** (or when no guesses are left) the person is marked `failed`.
 - A guess that later appears in a job post or on the site is upgraded to `found` automatically.
 
+## Hiring score and My desk
+
+**My desk** (top of the Companies tab) is your niche: the roles you place (e.g. *HVAC technician, service manager, estimator*), roles to skip (*intern, driver*), the areas you cover (*Austin, TX; MO; remote*) and a minimum salary (only used when a post states pay). A role fits when every word of one of your entries is in its title, so *HVAC technician* matches *HVAC Service Technician*.
+
+Every company gets a **hiring score** (0–100) with the reasons behind it:
+
+| Signal | Points |
+|---|---|
+| Open roles in your niche | +25 for the first, +10 each after (max 45) |
+| Niche roles open 30+ days (hard to fill) | +10 each (max 20) |
+| No in-house recruiter found / they have one | +10 / −10 |
+| Hiring manager for a niche role reachable (found email or phone) / guessed email | +10 / +5 |
+| Other open roles (growing) | +2 each (max 10) |
+| Permit / license activity in public records | up to +10 |
+| Past client in Loxo (warm) | +5 |
+| Off-limits | score 0 |
+
+A role only counts while it's still listed (seen in the last 30 days). The **Companies** tab is sorted by score (tick *Only with roles in my niche* to focus), the **Jobs** tab marks roles that *fit my desk*, each company page shows its breakdown, and the **Pipeline** tab lists the best accounts not yet in your pipeline. Command line: `zoomollo desk --titles "..."` and `zoomollo top`.
+
 ## Pipeline, follow-ups and email
 
 The **Pipeline** tab is where business development happens.
