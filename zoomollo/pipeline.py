@@ -196,7 +196,8 @@ def guess_for_person(db: DB, full_name: str, domain: str, title: str | None = No
 
 def prospect(db: DB, what: str, where: str, limit: int = 25, crawl_pages: int = 15,
              use_osm: bool = True, use_hubs: bool = True, use_sources: bool = True,
-             follow_links: bool = True, progress: Progress | None = None, crawler=None) -> dict:
+             use_records: bool = True, follow_links: bool = True, progress: Progress | None = None,
+             crawler=None) -> dict:
     """'Commercial HVAC' + 'Austin, TX' -> companies, jobs, people, hiring managers, emails.
 
     No search engines or paid services: companies come from map data, business-group
@@ -212,6 +213,22 @@ def prospect(db: DB, what: str, where: str, limit: int = 25, crawl_pages: int = 
     say(f"Looking for {what} in {where}…")
     cands = find_companies(what, where, limit, use_osm=use_osm, use_hubs=use_hubs, crawler=crawler,
                            progress=say)
+    if use_records:
+        # License lists and building permits on the city's / state's open-data portals.
+        from .opendata import find_public_records
+        try:
+            records, _ = find_public_records(what, where, progress=say)
+        except Exception as e:  # noqa: BLE001 - optional source
+            records = []
+            say(f"Public records unavailable ({e})")
+        say(f"Public records: {len(records)} matching businesses")
+        known = {c.key for c in cands} | {c.domain for c in cands if c.domain}
+        records = [r for r in records if r.key not in known]
+        # Alternate, so the most active licensed / permitted businesses aren't crowded out.
+        mixed = []
+        for i in range(max(len(cands), len(records))):
+            mixed += cands[i:i + 1] + records[i:i + 1]
+        cands = mixed
     if use_sources:
         from .datasources import from_source
         for src in db.sources():

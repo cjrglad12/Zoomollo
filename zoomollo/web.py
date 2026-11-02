@@ -181,7 +181,7 @@ window.zmApply();
 FIND = """<div class="grid">
 <form class="card big" method="post" action="{{ url_for('enqueue') }}"><h3>Prospect</h3>
 <p>Describe the companies and the city. Zoomollo finds them, crawls their sites and job boards, maps their people and flags likely hiring managers.</p>
-<p>Companies come from map data, chamber of commerce and association member directories, your public data sources below, and links between company websites. No search engines or paid services.</p>
+<p>Companies come from map data, chamber of commerce and association member directories, license and permit records on your city's and state's open-data portals (found automatically), your own public data sources below, and links between company websites. No search engines or paid services.</p>
 <input type="hidden" name="action" value="prospect">
 <div class="row"><input name="what" placeholder="What they do: commercial HVAC, law firms, SaaS…" required>
 <input name="where" placeholder="City: Austin, TX" required>
