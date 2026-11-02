@@ -368,6 +368,33 @@ def imap_configured() -> bool:
                 and (os.environ.get("IMAP_PASSWORD") or os.environ.get("SMTP_PASSWORD")))
 
 
+def test_connection() -> list[str]:
+    """Log in to SMTP (and IMAP if set) without sending anything. Returns problems found."""
+    problems = []
+    try:
+        host, port = os.environ["SMTP_HOST"], int(os.environ.get("SMTP_PORT") or 587)
+        server = smtplib.SMTP_SSL(host, port, timeout=20) if port == 465 else smtplib.SMTP(host, port, timeout=20)
+        with server:
+            if port != 465:
+                server.starttls()
+            server.login(os.environ["SMTP_USER"], os.environ["SMTP_PASSWORD"])
+    except smtplib.SMTPAuthenticationError:
+        problems.append("Sending: Google rejected the login. Use an app password (not your normal password), "
+                        "and check the address.")
+    except Exception as e:  # noqa: BLE001
+        problems.append(f"Sending: couldn't connect ({e}).")
+    if imap_configured():
+        try:
+            with imaplib.IMAP4_SSL(os.environ["IMAP_HOST"], int(os.environ.get("IMAP_PORT") or 993)) as box:
+                box.login(os.environ.get("IMAP_USER") or os.environ["SMTP_USER"],
+                          os.environ.get("IMAP_PASSWORD") or os.environ["SMTP_PASSWORD"])
+        except imaplib.IMAP4.error:
+            problems.append("Reading replies: login rejected. In Gmail settings, make sure IMAP is enabled.")
+        except Exception as e:  # noqa: BLE001
+            problems.append(f"Reading replies: couldn't connect ({e}).")
+    return problems
+
+
 def daily_limit() -> int:
     try:
         return int(os.environ.get("EMAIL_DAILY_LIMIT") or 40)

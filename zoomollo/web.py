@@ -426,12 +426,27 @@ var zmT;function zmQR(){clearTimeout(zmT);zmT=setTimeout(function(){
 {% if history %}<div class="section"><b>Sent before</b></div>{% for m in history %}<div class="preview" style="margin-bottom:8px"><span class="muted">{{ m.sent_at[:16].replace('T',' ') }} · {{ m.channel }}</span><br>{{ m.body }}</div>{% endfor %}{% endif %}"""
 
 PIPELINE = OL_MACRO + """<div class="grid">
-<div class="card"><h3>Email</h3>{% if smtp %}<p>Sending from your mailbox (<b>{{ smtp_user }}</b>). {{ sent_today }} of {{ daily_limit }} sent today.</p>
-{% if due_emails %}<form method="post" action="{{ url_for('pipeline_tools') }}"><input type="hidden" name="action" value="send_all"><button>Send all {{ due_emails }} due emails</button></form>{% endif %}
-{% else %}<p><b>Open in email app</b> fills in each email for you to send. To send straight from Zoomollo, add your mailbox to <b>zoomollo-settings.txt</b> (SMTP_HOST, SMTP_USER, SMTP_PASSWORD; use an app password).</p>{% endif %}</div>
+<div class="card" id="email"><h3>Email</h3>
+{% if email_msg %}<div class="{{ 'warn' if email_bad else 'preview' }}" style="margin-bottom:10px">{{ email_msg }}</div>{% endif %}
+{% if smtp %}<p>Sending from your mailbox (<b>{{ smtp_user }}</b>). {{ sent_today }} of {{ daily_limit }} sent today.</p>
+<form method="post" action="{{ url_for('email_setup') }}" class="row">
+{% if due_emails %}<button formaction="{{ url_for('pipeline_tools') }}" name="action" value="send_all">Send all {{ due_emails }} due emails</button>{% endif %}
+<button name="action" value="test_send" class="ghost">Send test email to myself</button>
+{% if gmail %}<button name="action" value="disconnect" class="ghost" onclick="return confirm('Remove your Gmail details from this computer?')">Disconnect</button>{% endif %}</form>
+{% else %}<p><b>Open in email app</b> works with no setup. To send from Zoomollo and have replies and bounces picked up automatically, connect Gmail:</p>
+<form method="post" action="{{ url_for('email_setup') }}"><input type="hidden" name="action" value="gmail">
+<input type="email" name="address" placeholder="you@gmail.com or your Google Workspace address" style="width:100%;margin-bottom:8px" required>
+<input type="password" name="app_password" placeholder="Google app password (16 letters)" autocomplete="off" style="width:100%;margin-bottom:8px" required>
+<button>Connect Gmail</button></form>
+<details style="font-size:13px;margin-top:8px"><summary>How to get an app password</summary><ol style="padding-left:18px;margin:6px 0">
+<li>Turn on 2-Step Verification in your Google Account (Security).</li>
+<li>Open <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>, name it "Zoomollo", and create it.</li>
+<li>Paste the 16-letter password here. It's saved only in zoomollo-settings.txt on this computer.</li>
+<li>For reply checking, IMAP must be on: Gmail → Settings → Forwarding and POP/IMAP.</li></ol>
+Workspace accounts: your admin may need to allow app passwords. Microsoft 365: use <b>Open in email app</b>.</details>{% endif %}</div>
 <div class="card"><h3>Replies &amp; bounces</h3>{% if imap %}<p>Your inbox is checked every 10 minutes{% if inbox_at %} (last {{ inbox_at[11:16] }}){% endif %}. Replies stop follow-ups, “unsubscribe” blocks the address, bounces try the next email guess.</p>
 <form method="post" action="{{ url_for('pipeline_tools') }}"><input type="hidden" name="action" value="inbox"><button>Check now</button></form>
-{% else %}<p>Mark replies with the stage menu below. Add IMAP_HOST to <b>zoomollo-settings.txt</b> to have Zoomollo spot replies and bounces in your inbox for you.</p>{% endif %}</div>
+{% else %}<p>Mark replies with the stage menu below, or <b>connect Gmail</b> (Email box) and Zoomollo spots replies, unsubscribes and bounces in your inbox for you.</p>{% endif %}</div>
 <div class="card"><h3>Loxo off-limits</h3>{% if loxo_on %}<p>{{ loxo_count }} Loxo companies{% if loxo_synced %}, synced {{ loxo_synced[:16].replace('T', ' ') }}{% else %}, not synced yet{% endif %}. Active clients and recent placements are blocked from outreach.</p>
 <form method="post" action="{{ url_for('pipeline_tools') }}" class="row"><button name="action" value="loxo">Quick sync</button>
 <button name="action" value="loxo_full" class="ghost" title="All companies, statuses and block flags; takes several minutes on big accounts">Full sync</button></form>
@@ -818,10 +833,44 @@ def create_app(db_path: str | None = None) -> Flask:
                       sent_today=crm.sent_today(db), daily_limit=crm.daily_limit(),
                       due_emails=sum(1 for i in due if i["kind"] == "step" and i["channel"] == "email"),
                       imap=crm.imap_configured(), inbox_at=db.get_setting("inbox_checked_at"),
+                      gmail=bool(os.environ.get("GMAIL_ADDRESS")), email_msg=request.args.get("email_msg", ""),
+                      email_bad=request.args.get("email_bad") == "1",
                       loxo_on=loxo.configured(), loxo_synced=db.get_setting("loxo_synced_at"),
                       loxo_full=db.get_setting("loxo_full_synced_at"),
                       loxo_count=db.conn.execute("SELECT COUNT(*) FROM loxo_companies").fetchone()[0],
                       log=[ln for ln in list(log)[:8] if any(w in ln for w in ("Loxo", "Inbox", "Sent", "✗", "✓ "))])
+
+    @app.post("/email/setup")
+    def email_setup():
+        import os
+        from . import crm
+        from .settings import GMAIL, save_values
+        f = request.form
+        action = f.get("action")
+        msg, bad = "", False
+        if action == "gmail":
+            addr = f.get("address", "").strip()
+            pw = "".join(f.get("app_password", "").split())
+            save_values({"GMAIL_ADDRESS": addr, "GMAIL_APP_PASSWORD": pw, **GMAIL,
+                         "SMTP_USER": addr, "SMTP_PASSWORD": pw})
+            problems = crm.test_connection()
+            if problems:
+                msg, bad = "Saved, but: " + " ".join(problems), True
+            else:
+                msg = "Gmail connected: sending works" + (" and replies will be picked up." if crm.imap_configured() else ".")
+        elif action == "disconnect":
+            save_values({k: "" for k in ["GMAIL_ADDRESS", "GMAIL_APP_PASSWORD", "SMTP_HOST", "SMTP_PORT", "SMTP_USER",
+                                         "SMTP_PASSWORD", "IMAP_HOST", "IMAP_PORT"]})
+            msg = "Gmail disconnected and removed from this computer."
+        elif action == "test_send":
+            me = os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USER", "")
+            try:
+                crm.send_smtp(DB(db_path), me, "Zoomollo test email",
+                              "This is a test from Zoomollo. If you can read it, sending works.")
+                msg = f"Test email sent to {me}. Check your inbox."
+            except Exception as e:  # noqa: BLE001
+                msg, bad = f"Test email failed: {e}", True
+        return redirect(url_for("pipeline_page", email_msg=msg, email_bad=int(bad)) + "#email")
 
     @app.post("/pipeline/tools")
     def pipeline_tools():

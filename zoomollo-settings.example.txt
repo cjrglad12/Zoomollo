@@ -8,7 +8,12 @@ LOXO_API_KEY=
 # Months after a placement that the company stays off-limits (default 12)
 OFFLIMITS_MONTHS=
 
-# --- Email from your own mailbox (optional; without it, "Open in email app" works with no setup)
+# --- Gmail / Google Workspace (easiest: use "Connect Gmail" on the Pipeline tab, which fills these in)
+# App password: https://myaccount.google.com/apppasswords (needs 2-Step Verification). Not your normal password.
+GMAIL_ADDRESS=
+GMAIL_APP_PASSWORD=
+
+# --- Any other mailbox (optional; without it, "Open in email app" works with no setup)
 # Gmail / Google Workspace: SMTP_HOST=smtp.gmail.com, IMAP_HOST=imap.gmail.com, and an app password
 #   (Google Account > Security > 2-Step Verification > App passwords), not your normal password.
 # Outlook.com / Microsoft 365: many business accounts block app passwords; use "Open in email app" instead.
