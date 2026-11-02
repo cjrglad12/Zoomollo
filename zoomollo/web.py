@@ -34,6 +34,8 @@ LINKEDIN_MACRO = """{% macro linkedin(p) %}<div class="listack">
 <input name="url" placeholder="linkedin.com/in/…" required><button>Save</button></form></details>{% endif %}
 </div>{% endmacro %}"""
 
+OL_MACRO = """{% macro olbadge(st) %}{% if st and st.level %}<span class="chip ol-{{ st.level }}" title="{{ st.reason }}">{{ {'blocked': '⛔ Off-limits', 'warn': 'Past client', 'info': 'In Loxo'}[st.level] }}</span>{% endif %}{% endmacro %}"""
+
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -95,7 +97,7 @@ td.v,.v{font-family:ui-monospace,Menlo,monospace;font-size:13px}.chip{background
 .person .n{font-weight:600}.person .t{color:var(--muted);font-size:13px}.person .c{font-size:13px;margin-top:2px;word-break:break-all}
 h2{margin:0 0 4px}.sub{color:var(--muted);margin-bottom:16px}.section{margin:22px 0 10px;font-size:15px}
 form.fb{display:inline}form.fb button{padding:1px 7px;font-size:12px;border-radius:6px;margin-left:2px}
-form.fb button.no{background:var(--danger)}form.fb button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
+form.fb button.no{background:var(--danger)}button.ghost,form.fb button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
 .st-confirmed,.st-found{background:var(--ok-bg);color:var(--ok-ink)}.st-failed{background:var(--bad-bg);color:var(--bad-ink)}.st-catch_all{background:var(--hm);color:var(--hmink)}
 /* Theme / layout switches */
 .toggles{display:flex;gap:10px;margin-left:auto;flex-wrap:wrap}
@@ -130,7 +132,16 @@ html.mobile td.wraptext{min-width:0}
 html.mobile form.fb button{padding:6px 12px;font-size:14px;margin:4px 4px 0 0}
 html.mobile .tpl textarea{min-height:220px}html.mobile .sub{font-size:14px}html.mobile h2{font-size:21px}
 html.forced-mobile body{max-width:480px;margin:0 auto;border-left:1px solid var(--line);border-right:1px solid var(--line);min-height:100vh}
-td.em{white-space:normal;min-width:230px;max-width:300px}a.btn.li{padding:3px 9px;font-size:12px;border-radius:6px;white-space:nowrap}
+td.em{white-space:normal;min-width:230px;max-width:300px}.ol-blocked{background:var(--bad-bg);color:var(--bad-ink)}.ol-warn{background:var(--hm);color:var(--hmink)}
+.board{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(230px,1fr);gap:12px;overflow-x:auto;padding-bottom:6px}
+.col h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.pcard{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:14px}
+.pcard select{padding:3px 6px;font-size:12px;margin-top:6px}.overdue{color:var(--bad-ink);font-weight:600}
+html.mobile .board{grid-auto-flow:row;grid-auto-columns:auto}
+.tl{border-left:2px solid var(--line);padding-left:12px}.tl div{margin-bottom:10px;white-space:pre-wrap;font-size:13px}
+.tl .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.acts button{margin:2px 4px 2px 0}.steps td{padding:4px 6px}.steps input,.steps select{padding:4px 6px;font-size:13px}
+a.btn.li{padding:3px 9px;font-size:12px;border-radius:6px;white-space:nowrap}
 .listack{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
 details.lisave{font-size:12px}details.lisave summary{cursor:pointer;color:var(--accent)}
 details.lisave form{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin-top:4px}details.lisave input{padding:4px 6px;font-size:12px;width:125px}
@@ -142,7 +153,7 @@ a.msg{text-decoration:none;padding:1px 6px;border:1px solid var(--line);border-r
 a{color:var(--accent)}.warn{background:var(--hm);color:var(--hmink);padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:12px}
 </style></head><body>
 <header><div class="brand"><b>Zoomollo</b></div><nav>
-{% for t,label in [('find','Prospect'),('people','People'),('companies','Companies'),('contacts','Contacts'),('jobs','Jobs'),('messages','Messages')] %}
+{% for t,label in [('find','Prospect'),('pipeline_page','Pipeline'),('people','People'),('companies','Companies'),('contacts','Contacts'),('jobs','Jobs'),('messages','Messages')] %}
 <a href="{{ url_for(t) }}" class="{{ 'on' if tab==t }}">{{ label }}</a>{% endfor %}</nav>
 <div class="toggles">
 <div class="seg" role="group" aria-label="Theme"><span class="seg-l">Theme</span>
@@ -213,26 +224,69 @@ FIND = """<div class="grid">
 {% if guesses %}<div class="log" style="margin-top:10px">{{ guesses|join('\\n') }}</div>{% endif %}</form>
 </div>"""
 
-PEOPLE = EMAIL_MACRO + LINKEDIN_MACRO + """<form class="bar"><input type="search" name="q" value="{{ q }}" placeholder="Name, title, company, city, industry…">
+PEOPLE = EMAIL_MACRO + LINKEDIN_MACRO + OL_MACRO + """<form class="bar"><input type="search" name="q" value="{{ q }}" placeholder="Name, title, company, city, industry…">
 <select name="department"><option value="">All departments</option>{% for k,v in depts.items() %}<option value="{{ k }}" {{ 'selected' if k==dept }}>{{ v }}</option>{% endfor %}</select>
 <label class="chip" style="padding:8px 10px"><input type="checkbox" name="hiring" value="1" {{ 'checked' if hiring }} style="padding:0"> Hiring managers</label>
 <button>Search</button><a class="btn" href="{{ url_for('export_people', q=q, department=dept, hiring=hiring) }}">Export CSV</a></form>
+{% if rows and sequences %}<form class="bar" method="post" action="{{ url_for('enroll_bulk') }}">
+<input type="hidden" name="q" value="{{ q }}"><input type="hidden" name="department" value="{{ dept or '' }}"><input type="hidden" name="hiring" value="{{ '1' if hiring else '' }}">
+<span class="muted" style="align-self:center">Start follow-ups for everyone shown:</span>
+<select name="sequence">{% for sq in sequences %}<option value="{{ sq.id }}">{{ sq.name }}</option>{% endfor %}</select>
+<button title="Skips off-limits companies and people without an email or phone">Start</button></form>{% endif %}
 <div class="wrap"><table><tr><th>Name</th><th>Title</th><th>Company</th><th>Email</th><th>Phone</th><th>Hiring for</th><th></th></tr>
 {% for p in rows %}<tr><td><b>{{ p.name }}</b></td><td>{{ p.title or '' }}</td>
-<td><a href="{{ url_for('company', cid=p.company_id) }}">{{ p.company_name or p.company_key }}</a></td>
+<td><a href="{{ url_for('company', cid=p.company_id) }}">{{ p.company_name or p.company_key }}</a> {{ olbadge(ol(p.company_id)) }}</td>
 <td class="v em">{{ email_cell(p) }}</td>
 <td class="v">{% if p.phone %}{{ p.phone }} <a class="msg" href="{{ url_for('message', person=p.id) }}" title="Send a text">💬</a>{% endif %}</td><td class="wraptext">{% if p.hiring_for %}<span class="chip hm">{{ p.hiring_for }}</span>{% endif %}</td>
-<td>{{ linkedin(p) }}</td></tr>
+<td>{{ linkedin(p) }}{% if (p.email or p.phone) and sequences and not ol(p.company_id).blocked %}
+<form class="fb" method="post" action="{{ url_for('enroll') }}"><input type="hidden" name="person" value="{{ p.id }}">
+<input type="hidden" name="sequence" value="{{ sequences[0].id }}"><button class="ghost" style="background:transparent;color:var(--accent);border:1px solid var(--line);margin-top:4px" title="Start: {{ sequences[0].name }}">Follow up</button></form>{% endif %}</td></tr>
 {% else %}<tr><td colspan="7">No people yet. Start on the <a href="{{ url_for('find') }}">Prospect</a> tab.</td></tr>{% endfor %}</table></div>"""
 
-COMPANY = EMAIL_MACRO + LINKEDIN_MACRO + """<h2>{{ co.name or co.key }}</h2>
+COMPANY = EMAIL_MACRO + LINKEDIN_MACRO + OL_MACRO + """<h2>{{ co.name or co.key }}</h2>
 <form class="fb" method="post" action="{{ url_for('block', cid=co.id) }}" style="float:right"
  onsubmit="return confirm('Block this company as staffing/recruiting? Everything saved for it is deleted.')">
 <button class="no">Block (staffing / recruiting)</button></form>
 <div class="sub">{% if co.domain %}<a href="https://{{ co.domain }}" target="_blank" rel="noopener">{{ co.domain }}</a> · {% endif %}
 {% if co.industry %}{{ co.industry }} · {% endif %}{% if co.city %}{{ co.city }} · {% endif %}
 {% if co.phone %}<span class="v">{{ co.phone }}</span> <a class="msg" href="{{ url_for('message', company=co.id) }}" title="Send a text">💬</a> · {% endif %}{% if co.address %}{{ co.address }} · {% endif %}
-{% if co.email_pattern %}email format <span class="v">{{ co.email_pattern }}@{{ co.domain }}</span> ({{ (co.pattern_confidence*100)|int }}%){% endif %}</div>
+{% if co.email_pattern %}email format <span class="v">{{ co.email_pattern }}@{{ co.domain }}</span> ({{ ((co.pattern_confidence or 0)*100)|int }}%){% endif %}</div>
+{% if offl.level %}<div class="{{ 'warn' if offl.level != 'info' else 'preview' }}" style="margin-bottom:12px">{{ olbadge(offl) }} {{ offl.reason }}</div>{% endif %}
+<div class="grid">
+<div class="card"><h3>Pipeline</h3>
+{% if card %}
+<form method="post" action="{{ url_for('pipeline_post', cid=co.id) }}" class="row" style="margin-bottom:8px"><input type="hidden" name="action" value="update">
+<select name="stage">{% for k, v in stages %}<option value="{{ k }}" {{ 'selected' if k == card.stage }}>{{ v }}</option>{% endfor %}</select>
+<select name="contact"><option value="">Main contact…</option>{% for p in people %}<option value="{{ p.id }}" {{ 'selected' if p.id == card.contact_id }}>{{ p.name }}{% if p.title %} ({{ p.title }}){% endif %}</option>{% endfor %}</select>
+<input name="next_step" value="{{ card.next_step or '' }}" placeholder="Next step, e.g. call Tuesday" style="flex:2;min-width:160px">
+<input type="date" name="due_date" value="{{ card.due_date or '' }}">
+<input name="owner" value="{{ card.owner or '' }}" placeholder="Owner" style="max-width:110px"><button>Save</button></form>
+<form method="post" action="{{ url_for('pipeline_post', cid=co.id) }}" class="row"><input type="hidden" name="action" value="note">
+<input name="note" placeholder="Add a note (call outcome, fee terms…)" style="flex:1" required><button>Add note</button></form>
+{% else %}
+<p>Not in your pipeline yet.</p>
+<form method="post" action="{{ url_for('pipeline_post', cid=co.id) }}" class="row"><input type="hidden" name="action" value="add">
+<select name="contact"><option value="">Main contact…</option>{% for p in people %}<option value="{{ p.id }}">{{ p.name }}{% if p.title %} ({{ p.title }}){% endif %}</option>{% endfor %}</select>
+{% if offl.blocked %}<label class="chip" style="padding:8px 10px"><input type="checkbox" name="force" value="1" required style="padding:0"> Add anyway ({{ offl.reason }})</label>{% endif %}
+<button>Add to pipeline</button></form>{% endif %}
+{% if sequences %}<form method="post" action="{{ url_for('enroll') }}" class="row" style="margin-top:10px">
+<select name="person">{% for p in people if p.email or p.phone %}<option value="{{ p.id }}" {{ 'selected' if card and p.id == card.contact_id }}>{{ p.name }}</option>{% endfor %}</select>
+<select name="sequence">{% for sq in sequences %}<option value="{{ sq.id }}">{{ sq.name }}</option>{% endfor %}</select>
+{% if offl.blocked %}<label class="chip" style="padding:8px 10px"><input type="checkbox" name="force" value="1" required style="padding:0"> Override off-limits</label>{% endif %}
+<button>Start follow-ups</button></form>{% endif %}
+{% for e in enrollments %}<div class="row" style="align-items:center;margin-top:6px;font-size:13px"><span style="flex:1"><b>{{ e.name }}</b> · {{ e.sequence_name }} · <span class="chip">{{ e.status }}</span>{% if e.status == 'active' %} · step {{ e.step_no }}, due {{ e.next_due }}{% endif %}</span>
+{% if e.status == 'active' %}<form class="fb" method="post" action="{{ url_for('enrollment_post', eid=e.id) }}"><button name="action" value="stop" class="no">Stop</button></form>{% endif %}</div>{% endfor %}
+{% if timeline %}<div class="section"><b>Timeline</b></div><div class="tl">{% for a in timeline %}<div><span class="k">{{ a.created_at[:16].replace('T', ' ') }} · {{ a.kind }}{% if a.person_name %} · {{ a.person_name }}{% endif %}</span><br>{{ a.body }}</div>{% endfor %}</div>{% endif %}
+</div>
+<div class="card"><h3>Off-limits</h3>
+{% if co.offlimits_reason %}<p>Marked by you: <b>{{ co.offlimits_reason }}</b>{% if co.offlimits_until %} until {{ co.offlimits_until }}{% endif %}.</p>
+<form method="post" action="{{ url_for('offlimits_post', cid=co.id) }}"><input type="hidden" name="action" value="clear"><button>Clear</button></form>
+{% else %}<form method="post" action="{{ url_for('offlimits_post', cid=co.id) }}"><input type="hidden" name="action" value="set">
+<input name="reason" placeholder="Reason, e.g. client of a partner agency" style="width:100%;margin-bottom:8px" required>
+<label class="muted" style="font-size:13px">Until (optional) <input type="date" name="until"></label><br><button style="margin-top:8px">Mark off-limits</button></form>{% endif %}
+<p style="margin-top:12px">{% if loxo_row %}In Loxo as <b>{{ loxo_row.name }}</b>: {{ loxo_row.open_jobs }} open job(s), {{ loxo_row.all_jobs }} total, {{ loxo_row.placements }} placement(s){% if loxo_row.last_placement %}, last {{ loxo_row.last_placement }}{% endif %}.
+{% elif loxo_on %}Not found in Loxo{% if loxo_synced %} (synced {{ loxo_synced[:10] }}){% else %} (not synced yet: see the Pipeline tab){% endif %}.{% else %}Loxo isn't connected, so only your own off-limits marks apply.{% endif %}</p>
+</div></div>
 
 <div class="section"><b>Org map</b> <span class="muted">· {{ people|length }} people</span></div>
 {% if people %}<div class="org">{% for d, ps in org %}<div class="card dept"><h4>{{ depts[d] }}</h4>
@@ -277,7 +331,9 @@ MESSAGES = """<div class="grid">
 <form class="card" method="post" action="{{ url_for('messages_post') }}"><h3>Your details</h3>
 <p>Used for {my_name} and {my_company} in templates.</p><input type="hidden" name="action" value="me">
 <input name="my_name" value="{{ my_name }}" placeholder="Your name" style="width:100%;margin-bottom:8px">
-<input name="my_company" value="{{ my_company }}" placeholder="Your company" style="width:100%;margin-bottom:8px"><button>Save</button></form>
+<input name="my_company" value="{{ my_company }}" placeholder="Your company" style="width:100%;margin-bottom:8px">
+<input name="my_address" value="{{ my_address }}" placeholder="Business mailing address (required in sales emails)" style="width:100%;margin-bottom:8px"><button>Save</button>
+{% if not my_address %}<p class="muted" style="margin-top:8px">US law (CAN-SPAM) requires a mailing address in sales emails; it's added to the email footer.</p>{% endif %}</form>
 
 <form class="card" method="post" action="{{ url_for('messages_post') }}"><h3>Draft a template with AI</h3>
 <p>Runs on your own computer (Ollama) — nothing is sent anywhere. {% if not ai %}<b>Not set up yet:</b> {{ ai_help }}{% endif %}</p>
@@ -297,6 +353,29 @@ MESSAGES = """<div class="grid">
 <form class="tpl" method="post" action="{{ url_for('messages_post') }}"><input type="hidden" name="action" value="save">
 <input name="name" value="{{ 'AI draft' if draft else '' }}" placeholder="New template name" style="width:100%;margin-bottom:6px;font-weight:600" required>
 <textarea name="body" placeholder="Hi {first_name}, ..." required>{{ draft or '' }}</textarea><button>{{ 'Save AI draft' if draft else 'Add template' }}</button></form></div>
+
+<div class="card big" id="email-templates"><h3>Email templates</h3>
+<p>Same fields as texts. Your name, company, mailing address and an unsubscribe line are added to the bottom of every email.</p>
+{% for t in email_templates %}<form class="tpl" method="post" action="{{ url_for('messages_post') }}" style="margin-bottom:14px">
+<input type="hidden" name="action" value="save"><input type="hidden" name="kind" value="email"><input type="hidden" name="id" value="{{ t.id }}">
+<input name="name" value="{{ t.name }}" style="width:100%;margin-bottom:6px;font-weight:600">
+<input name="subject" value="{{ t.subject or '' }}" placeholder="Subject" style="width:100%;margin-bottom:6px"><textarea name="body">{{ t.body }}</textarea>
+<div class="row"><button>Save</button><button name="action" value="delete" class="no" style="background:var(--danger)" onclick="return confirm('Delete this template?')">Delete</button></div></form>{% endfor %}
+<form class="tpl" method="post" action="{{ url_for('messages_post') }}"><input type="hidden" name="action" value="save"><input type="hidden" name="kind" value="email">
+<input name="name" placeholder="New email template name" style="width:100%;margin-bottom:6px;font-weight:600" required>
+<input name="subject" placeholder="Subject, e.g. {role} at {company}" style="width:100%;margin-bottom:6px" required>
+<textarea name="body" placeholder="Hi {first_name}, ..." required></textarea><button>Add email template</button></form></div>
+
+<div class="card big" id="sequences"><h3>Follow-up sequences</h3>
+<p>Steps go out this many days after someone is started. Text steps are skipped for people without a phone, email steps for people without an email. A reply, or moving the company past <i>Contacted</i>, stops the sequence.</p>
+{% for sq in sequences %}<form method="post" action="{{ url_for('messages_post') }}" style="margin-bottom:16px"><input type="hidden" name="action" value="sequence"><input type="hidden" name="id" value="{{ sq.id }}">
+<input name="name" value="{{ sq.name }}" style="font-weight:600;margin-bottom:6px;width:100%">
+<table class="steps">{% for st in sq.steps + [None] %}<tr><td>Day <input type="number" name="day" value="{{ st.day if st else '' }}" min="0" style="width:64px"></td>
+<td><select name="channel"><option value="email" {{ 'selected' if st and st.channel == 'email' }}>Email</option><option value="text" {{ 'selected' if st and st.channel == 'text' }}>Text</option></select></td>
+<td><select name="template"><option value="">{{ 'Template…' if st else '+ add a step' }}</option>{% for t in all_templates %}<option value="{{ t.id }}" {{ 'selected' if st and st.template_id == t.id }}>{{ 'Email' if t.kind == 'email' else 'Text' }}: {{ t.name }}</option>{% endfor %}</select></td></tr>{% endfor %}</table>
+<div class="row" style="margin-top:6px"><button>Save sequence</button><span class="muted" style="align-self:center;font-size:12px">Clear a step's day to remove it.</span></div></form>{% endfor %}
+<form method="post" action="{{ url_for('messages_post') }}" class="row"><input type="hidden" name="action" value="sequence">
+<input name="name" placeholder="New sequence name" required><button>Create sequence</button></form></div>
 
 <div class="card big" id="queue"><h3>Outreach queue</h3>
 <p>People with their own phone number who haven't been texted yet. <b>Text</b> opens your texting app with the message written (on a Mac: Messages, sending from your iPhone) — you press Send. <b>Phone / edit</b> shows a QR code to send from your phone instead.</p>
@@ -328,6 +407,7 @@ MESSAGE_ONE = """<h2>Text {{ who }}</h2><div class="sub">{{ phone }}{% if last %
 {% if missing %}<p>Not known, filled generically: {{ missing|join(', ') }}. Edit the message if it reads oddly.</p>{% endif %}
 <input type="hidden" name="phone" value="{{ phone }}"><input type="hidden" name="person" value="{{ pid or '' }}">
 <input type="hidden" name="company" value="{{ cid or '' }}"><input type="hidden" name="template" value="{{ tid or '' }}">
+{% if offl and offl.blocked %}<div class="warn">{{ offl.reason }}. <label><input type="checkbox" name="override" value="1" required style="padding:0"> Send anyway</label></div>{% endif %}
 <div class="row"><button name="channel" value="sms" title="Opens your texting app. On a Mac this is Messages, sending from your iPhone">Open in Messages</button>
 <button type="button" class="ghost" style="background:transparent;color:var(--accent);border:1px solid var(--line)" onclick="zmCopy(this)">Copy text</button>
 <button name="channel" value="manual" class="ghost" style="background:transparent;color:var(--accent);border:1px solid var(--line)" title="Log it after sending from your phone">Mark as sent</button></div></form>
@@ -344,6 +424,47 @@ var zmT;function zmQR(){clearTimeout(zmT);zmT=setTimeout(function(){
   .then(function(r){return r.text()}).then(function(svg){document.getElementById("qr").innerHTML=svg});},400);}
 </script>{% endif %}
 {% if history %}<div class="section"><b>Sent before</b></div>{% for m in history %}<div class="preview" style="margin-bottom:8px"><span class="muted">{{ m.sent_at[:16].replace('T',' ') }} · {{ m.channel }}</span><br>{{ m.body }}</div>{% endfor %}{% endif %}"""
+
+PIPELINE = OL_MACRO + """<div class="grid">
+<div class="card"><h3>Email</h3>{% if smtp %}<p>Sending from your mailbox (<b>{{ smtp_user }}</b>). {{ sent_today }} of {{ daily_limit }} sent today.</p>
+{% if due_emails %}<form method="post" action="{{ url_for('pipeline_tools') }}"><input type="hidden" name="action" value="send_all"><button>Send all {{ due_emails }} due emails</button></form>{% endif %}
+{% else %}<p><b>Open in email app</b> fills in each email for you to send. To send straight from Zoomollo, add your mailbox to <b>zoomollo-settings.txt</b> (SMTP_HOST, SMTP_USER, SMTP_PASSWORD; use an app password).</p>{% endif %}</div>
+<div class="card"><h3>Replies &amp; bounces</h3>{% if imap %}<p>Your inbox is checked every 10 minutes{% if inbox_at %} (last {{ inbox_at[11:16] }}){% endif %}. Replies stop follow-ups, “unsubscribe” blocks the address, bounces try the next email guess.</p>
+<form method="post" action="{{ url_for('pipeline_tools') }}"><input type="hidden" name="action" value="inbox"><button>Check now</button></form>
+{% else %}<p>Mark replies with the stage menu below. Add IMAP_HOST to <b>zoomollo-settings.txt</b> to have Zoomollo spot replies and bounces in your inbox for you.</p>{% endif %}</div>
+<div class="card"><h3>Loxo off-limits</h3>{% if loxo_on %}<p>{{ loxo_count }} Loxo companies{% if loxo_synced %}, synced {{ loxo_synced[:16].replace('T', ' ') }}{% else %}, not synced yet{% endif %}. Active clients and recent placements are blocked from outreach.</p>
+<form method="post" action="{{ url_for('pipeline_tools') }}"><input type="hidden" name="action" value="loxo"><button>Sync with Loxo</button></form>
+<p class="muted" style="font-size:12px;margin-top:6px">Runs in the background; large accounts take a few minutes. Progress shows below.</p>
+{% else %}<p>Add LOXO_AGENCY_SLUG and LOXO_API_KEY to <b>zoomollo-settings.txt</b> so active clients and recent placements are blocked automatically. Until then, mark companies off-limits on their page.</p>{% endif %}</div>
+</div>
+{% if log %}<div class="log card" style="margin-top:12px">{{ log|join('\n') }}</div>{% endif %}
+
+<div class="section"><b>Due today</b> <span class="muted">· {{ due|length }}</span></div>
+<div class="wrap"><table><tr><th>Who</th><th>What</th><th></th></tr>
+{% for it in due %}{% if it.kind == 'task' %}<tr><td><a href="{{ url_for('company', cid=it.company_id) }}">{{ it.company_name }}</a></td>
+<td class="wraptext"><span class="reason">next step{% if it.due < today %} · <span class="overdue">overdue</span>{% endif %}</span><br>{{ it.next_step }} <span class="muted">(due {{ it.due }})</span></td>
+<td><form class="fb" method="post" action="{{ url_for('pipeline_post', cid=it.company_id) }}"><input type="hidden" name="action" value="task_done"><button>Done</button></form></td></tr>
+{% else %}<tr><td><b>{{ it.name }}</b><br><span class="muted">{{ it.title or '' }}</span><br><a href="{{ url_for('company', cid=it.company_id) }}">{{ it.company_name }}</a></td>
+<td class="wraptext"><form method="post" action="{{ url_for('due_post', eid=it.enrollment_id) }}" id="d{{ it.enrollment_id }}">
+<span class="reason">step {{ it.step_no }} · {{ it.channel }} to {{ it.to }}{% if it.due < today %} · <span class="overdue">overdue</span>{% endif %}</span>
+{% if it.channel == 'email' %}<input name="subject" value="{{ it.subject }}" style="width:100%;margin:4px 0">{% endif %}
+<textarea name="body" style="width:100%;min-height:{{ 150 if it.channel == 'email' else 80 }}px">{{ it.body }}</textarea>
+{% if it.missing %}<span class="muted" style="font-size:12px">Filled generically: {{ it.missing|join(', ') }}</span>{% endif %}
+<div class="acts">{% if it.channel == 'email' %}{% if smtp %}<button name="action" value="smtp">Send</button>{% endif %}
+<button name="action" value="mailto" class="{{ 'ghost' if smtp }}">Open in email app</button>
+{% else %}<button name="action" value="text">Text</button><button name="action" value="phone" title="Sent it from your phone">Mark sent</button>{% endif %}
+<button name="action" value="skip" class="ghost">Skip step</button>
+<button name="action" value="stop" class="no" style="background:var(--danger)">Stop</button></div></form></td><td></td></tr>{% endif %}
+{% else %}<tr><td colspan="3">Nothing due. Start follow-ups from the People tab or a company page.</td></tr>{% endfor %}</table></div>
+
+<div class="section"><b>Pipeline</b> <span class="muted">· {{ total }} companies</span></div>
+<div class="board">{% for k, label in stages %}{% if board[k] or k in ('prospect', 'contacted', 'replied', 'meeting') %}<div class="col"><h4>{{ label }} · {{ board[k]|length }}</h4>
+{% for c in board[k] %}<div class="pcard"><a href="{{ url_for('company', cid=c.company_id) }}"><b>{{ c.company_name or c.company_key }}</b></a> {{ olbadge(c.offlimits) }}
+{% if c.contact_name %}<br><span class="muted">{{ c.contact_name }}{% if c.contact_title %}, {{ c.contact_title }}{% endif %}</span>{% endif %}
+{% if c.next_step %}<br><span class="{{ 'overdue' if c.overdue }}">{{ c.next_step }}{% if c.due_date %} · {{ c.due_date }}{% endif %}</span>{% endif %}
+<form method="post" action="{{ url_for('pipeline_post', cid=c.company_id) }}"><input type="hidden" name="action" value="stage">
+<select name="stage" onchange="this.form.submit()">{% for k2, l2 in stages %}<option value="{{ k2 }}" {{ 'selected' if k2 == k }}>{{ l2 }}</option>{% endfor %}</select></form></div>
+{% else %}<p class="muted" style="font-size:13px">—</p>{% endfor %}</div>{% endif %}{% endfor %}</div>"""
 
 JOBS = """<form class="bar"><input type="search" name="q" value="{{ q }}" placeholder="Role, company, city, contact…"><button>Search</button>
 <a class="btn" href="{{ url_for('export_hiring', q=q) }}">Export roles × contacts CSV</a></form>
@@ -368,7 +489,22 @@ def create_app(db_path: str | None = None) -> Flask:
             action, item, opts = tasks.get()
             state["busy"] += 1
             try:
-                if action == "prospect":
+                if action == "loxo_sync":
+                    from . import loxo
+                    r = loxo.sync(db, progress=log.appendleft)
+                    log.appendleft(f"✓ Loxo synced: {r['companies']} companies, {r['jobs']} jobs, "
+                                   f"{r['placements']} placements")
+                elif action == "inbox":
+                    from . import crm
+                    r = crm.check_inbox(db)
+                    if r["reply"] or r["bounce"] or r["unsubscribe"] or opts.get("loud"):
+                        log.appendleft(f"✓ Inbox: {r['reply']} replies, {r['unsubscribe']} unsubscribes, "
+                                       f"{r['bounce']} bounces")
+                elif action == "send_emails":
+                    from . import crm
+                    r = crm.send_due_emails(db, pause=8.0, progress=log.appendleft)
+                    log.appendleft(f"✓ Sent {r['sent']} emails" + (f", {r['failed']} failed" if r["failed"] else ""))
+                elif action == "prospect":
                     r = pipeline.prospect(db, opts["what"], opts["where"], opts.get("limit", 25),
                                           progress=log.appendleft)
                     log.appendleft(f"✓ done: {r['companies']} companies, {r['people']} people, "
@@ -397,11 +533,28 @@ def create_app(db_path: str | None = None) -> Flask:
 
     threading.Thread(target=worker, daemon=True).start()
 
+    def inbox_timer():
+        import time
+        from . import crm
+        while True:
+            time.sleep(600)
+            if crm.imap_configured():
+                tasks.put(("inbox", "inbox", {}))
+
+    threading.Thread(target=inbox_timer, daemon=True).start()
+
     def render(tab, tpl, **ctx):
         db = DB(db_path)
+        from .offlimits import status as offlimits_status
         from .orgmap import linkedin_search_url
+        cache: dict = {}
+
+        def ol(cid):
+            if cid not in cache:
+                cache[cid] = offlimits_status(db, cid)
+            return cache[cid]
         body = render_template_string(tpl, depts=DEPT_LABELS, levels=LEVEL_LABELS, li_search=linkedin_search_url,
-                                      dict=dict, **ctx)
+                                      dict=dict, ol=ol, **ctx)
         return render_template_string(PAGE, tab=tab, body=body, stats=db.stats(),
                                       busy=state["busy"] + tasks.qsize())
 
@@ -457,8 +610,11 @@ def create_app(db_path: str | None = None) -> Flask:
             for p in messaging.outreach_list(db, q=q, hiring_only=not all_people, limit=100):
                 text, missing = messaging.render(tpl["body"], messaging.person_fields(db, p["id"]))
                 queue.append({"p": p, "text": text, "missing": missing})
-        from . import ai
+        from . import ai, crm
+        crm.ensure_starters(db)
         return render("messages", SEND_MACRO + MESSAGES, templates=templates, tid=tid, queue=queue, q=q,
+                      email_templates=db.templates("email"), all_templates=db.templates(None),
+                      sequences=crm.sequences(db), my_address=db.get_setting("my_address") or "",
                       all_people=all_people, fields=messaging.FIELDS, my_name=db.get_setting("my_name") or "",
                       my_company=db.get_setting("my_company") or "", ai=ai.available(), ai_help=ai.SETUP_HELP,
                       draft=extra.get("draft"), draft_error=extra.get("draft_error"),
@@ -472,10 +628,25 @@ def create_app(db_path: str | None = None) -> Flask:
         if action == "me":
             db.set_setting("my_name", request.form.get("my_name", ""))
             db.set_setting("my_company", request.form.get("my_company", ""))
+            db.set_setting("my_address", request.form.get("my_address", ""))
         elif action == "save":
             name, body = request.form.get("name", "").strip(), request.form.get("body", "").strip()
+            kind = "email" if request.form.get("kind") == "email" else "text"
             if name and body:
-                db.save_template(name, body, int(request.form.get("id") or 0) or None)
+                db.save_template(name, body, int(request.form.get("id") or 0) or None, kind=kind,
+                                 subject=request.form.get("subject", "").strip() or None)
+            if kind == "email":
+                return redirect(url_for("messages") + "#email-templates")
+        elif action == "sequence":
+            from . import crm
+            steps = []
+            for day, ch, tid in zip(request.form.getlist("day"), request.form.getlist("channel"),
+                                    request.form.getlist("template")):
+                if day.strip() and tid:
+                    steps.append((int(day), "text" if ch == "text" else "email", int(tid)))
+            crm.save_sequence(db, request.form.get("name", "Sequence").strip() or "Sequence", steps,
+                              int(request.form.get("id") or 0) or None)
+            return redirect(url_for("messages") + "#sequences")
         elif action == "delete":
             db.delete_template(int(request.form.get("id") or 0))
         elif action == "draft":
@@ -519,6 +690,8 @@ def create_app(db_path: str | None = None) -> Flask:
         return render("messages", MESSAGE_ONE, who=who, phone=phone, pid=pid, cid=cid, templates=templates,
                       tid=tid, text=text, missing=missing, history=history,
                       qr=messaging.qr_svg(messaging.sms_link(phone, text)),
+                      offl=__import__("zoomollo.offlimits", fromlist=["status"]).status(
+                          db, cid or (db.conn.execute("SELECT company_id FROM people WHERE id = ?", (pid,)).fetchone() or [None])[0]),
                       last=messaging.last_messaged(db, phone), blocked=db.is_suppressed(e164))
 
     @app.post("/message/send")
@@ -527,9 +700,22 @@ def create_app(db_path: str | None = None) -> Flask:
         f = request.form
         phone, text = f.get("phone", ""), f.get("text", "").strip()
         channel = "phone" if f.get("channel") == "manual" else "sms"
-        if not messaging.log_message(db, phone, text, channel, int(f.get("person") or 0) or None,
-                                     int(f.get("company") or 0) or None, int(f.get("template") or 0) or None):
+        from .offlimits import status as offlimits_status
+        pid = int(f.get("person") or 0) or None
+        cid = int(f.get("company") or 0) or None
+        if pid and not cid:
+            row = db.conn.execute("SELECT company_id FROM people WHERE id = ?", (pid,)).fetchone()
+            cid = row["company_id"] if row else None
+        st = offlimits_status(db, cid)
+        if st.blocked and not f.get("override"):
+            return Response(f"Not sent. {st.reason}. Open the person's text page to send anyway.", status=403)
+        if not messaging.log_message(db, phone, text, channel, pid, cid, int(f.get("template") or 0) or None):
             return Response("This number opted out and can't be texted.", status=403)
+        if cid:
+            from . import crm
+            crm.log(db, cid, "text", text, pid)
+            crm.advance_to(db, cid, "contacted")
+            db.commit()
         if f.get("channel") == "manual":  # sent from the phone via the QR code
             return redirect(request.referrer or url_for("messages"))
         return redirect(messaging.sms_link(phone, text))
@@ -558,8 +744,11 @@ def create_app(db_path: str | None = None) -> Flask:
     @app.get("/people")
     def people():
         q, d, h = request.args.get("q", ""), request.args.get("department") or None, bool(request.args.get("hiring"))
-        return render("people", PEOPLE, rows=DB(db_path).people(q=q, department=d, hiring_only=h, limit=1000),
-                      q=q, dept=d, hiring=h)
+        from . import crm
+        db = DB(db_path)
+        crm.ensure_starters(db)
+        return render("people", PEOPLE, rows=db.people(q=q, department=d, hiring_only=h, limit=1000),
+                      q=q, dept=d, hiring=h, sequences=crm.sequences(db))
 
     @app.get("/company/<int:cid>")
     def company(cid: int):
@@ -575,8 +764,155 @@ def create_app(db_path: str | None = None) -> Flask:
         org = sorted(groups.items(), key=lambda kv: list(DEPT_LABELS).index(kv[0]) if kv[0] in DEPT_LABELS else 99)
         contacts = [r for r in db.search(limit=10_000) if r["company_id"] == cid and r["kind"] == "company"]
         matches = {j["id"]: db.job_contacts(j["id"]) for j in jobs}
+        from . import crm, loxo
+        from .offlimits import loxo_match, status as offlimits_status
+        crm.ensure_starters(db)
+        enrollments = db.conn.execute(
+            "SELECT e.*, p.name, s.name AS sequence_name FROM enrollments e JOIN people p ON p.id = e.person_id "
+            "JOIN sequences s ON s.id = e.sequence_id WHERE e.company_id = ? ORDER BY e.id DESC", (cid,)).fetchall()
         return render("companies", COMPANY, co=co, people=ppl, org=org, jobs=jobs,
-                      matches=matches, contacts=contacts)
+                      matches=matches, contacts=contacts, card=crm.card(db, cid), stages=crm.STAGES,
+                      sequences=crm.sequences(db), enrollments=enrollments, timeline=crm.timeline(db, cid),
+                      offl=offlimits_status(db, cid), loxo_row=loxo_match(db, cid), loxo_on=loxo.configured(),
+                      loxo_synced=db.get_setting("loxo_synced_at"))
+
+    # --- pipeline & follow-ups ------------------------------------------------------
+    @app.get("/pipeline")
+    def pipeline_page():
+        import os
+        from . import crm, loxo
+        db = DB(db_path)
+        crm.ensure_starters(db)
+        due = crm.due_items(db)
+        board = crm.board(db)
+        return render("pipeline_page", PIPELINE, due=due, board=board, stages=crm.STAGES, today=crm.today(),
+                      total=sum(len(v) for v in board.values()), smtp=crm.smtp_configured(),
+                      smtp_user=os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USER"),
+                      sent_today=crm.sent_today(db), daily_limit=crm.daily_limit(),
+                      due_emails=sum(1 for i in due if i["kind"] == "step" and i["channel"] == "email"),
+                      imap=crm.imap_configured(), inbox_at=db.get_setting("inbox_checked_at"),
+                      loxo_on=loxo.configured(), loxo_synced=db.get_setting("loxo_synced_at"),
+                      loxo_count=db.conn.execute("SELECT COUNT(*) FROM loxo_companies").fetchone()[0],
+                      log=[ln for ln in list(log)[:8] if any(w in ln for w in ("Loxo", "Inbox", "Sent", "✗", "✓ "))])
+
+    @app.post("/pipeline/tools")
+    def pipeline_tools():
+        action = request.form.get("action")
+        if action == "loxo":
+            tasks.put(("loxo_sync", "Loxo", {}))
+            log.appendleft("queued: Loxo sync")
+        elif action == "inbox":
+            tasks.put(("inbox", "inbox", {"loud": True}))
+            log.appendleft("queued: inbox check")
+        elif action == "send_all":
+            tasks.put(("send_emails", "emails", {}))
+            log.appendleft("queued: sending due emails")
+        return redirect(url_for("pipeline_page"))
+
+    @app.post("/pipeline/<int:cid>")
+    def pipeline_post(cid: int):
+        from . import crm
+        db = DB(db_path)
+        f = request.form
+        action = f.get("action")
+        try:
+            if action == "add":
+                crm.add_to_pipeline(db, cid, int(f.get("contact") or 0) or None, force=bool(f.get("force")))
+            elif action == "stage":
+                crm.set_stage(db, cid, f.get("stage", "prospect"))
+            elif action == "update":
+                c = crm.card(db, cid)
+                if c and f.get("stage") and f.get("stage") != c["stage"]:
+                    crm.set_stage(db, cid, f["stage"])
+                crm.update_card(db, cid, contact_id=int(f.get("contact") or 0) or None, owner=f.get("owner", ""),
+                                next_step=f.get("next_step", "").strip(), due_date=f.get("due_date", ""))
+            elif action == "note":
+                crm.add_note(db, cid, f.get("note", ""))
+            elif action == "task_done":
+                crm.task_done(db, cid)
+        except crm.OffLimits as e:
+            return Response(f"Not added. {e}. Tick 'Add anyway' to override.", status=403)
+        return redirect(request.referrer or url_for("company", cid=cid))
+
+    @app.post("/enroll")
+    def enroll():
+        from . import crm
+        db = DB(db_path)
+        try:
+            crm.enroll(db, int(request.form["person"]), int(request.form["sequence"]), force=bool(request.form.get("force")))
+        except crm.OffLimits as e:
+            return Response(f"Not started. {e}.", status=403)
+        except ValueError as e:
+            return Response(f"Not started. {e}.", status=400)
+        return redirect(request.referrer or url_for("pipeline_page"))
+
+    @app.post("/enroll/bulk")
+    def enroll_bulk():
+        from . import crm
+        db = DB(db_path)
+        f = request.form
+        started = skipped = 0
+        for p in db.people(q=f.get("q", ""), department=f.get("department") or None,
+                           hiring_only=bool(f.get("hiring")), limit=1000):
+            try:
+                crm.enroll(db, p["id"], int(f["sequence"]))
+                started += 1
+            except (crm.OffLimits, ValueError):
+                skipped += 1
+        log.appendleft(f"✓ Follow-ups started for {started} people ({skipped} skipped: off-limits or no contact info)")
+        return redirect(url_for("pipeline_page"))
+
+    @app.post("/enrollment/<int:eid>")
+    def enrollment_post(eid: int):
+        from . import crm
+        db = DB(db_path)
+        if request.form.get("action") == "stop":
+            crm.stop(db, eid)
+        elif request.form.get("action") == "skip":
+            crm.skip_step(db, eid)
+        return redirect(request.referrer or url_for("pipeline_page"))
+
+    @app.post("/due/<int:eid>")
+    def due_post(eid: int):
+        from . import crm
+        db = DB(db_path)
+        f = request.form
+        action = f.get("action")
+        item = next((i for i in crm.due_items(db) if i["kind"] == "step" and i["enrollment_id"] == eid), None)
+        if action == "stop":
+            crm.stop(db, eid)
+        elif action == "skip":
+            crm.skip_step(db, eid)
+        elif item:
+            subject, body = f.get("subject", item["subject"]), f.get("body", item["body"])
+            if action == "smtp":
+                try:
+                    mid = crm.send_smtp(db, item["to"], subject, body)
+                except Exception as e:  # noqa: BLE001
+                    return Response(f"Couldn't send: {e}", status=502)
+                crm.complete_step(db, eid, "smtp", subject, body, item["to"])
+                db.conn.execute("UPDATE emails SET message_id = ? WHERE id = (SELECT MAX(id) FROM emails)", (mid,))
+                db.commit()
+            elif action == "mailto":
+                crm.complete_step(db, eid, "mailto", subject, body, item["to"])
+                return redirect(crm.mailto_link(item["to"], subject, body))
+            elif action == "text":
+                crm.complete_step(db, eid, "sms", body=body, to=item["to"])
+                return redirect(messaging.sms_link(item["to"], body))
+            elif action == "phone":
+                crm.complete_step(db, eid, "phone", body=body, to=item["to"])
+        return redirect(url_for("pipeline_page"))
+
+    @app.post("/offlimits/<int:cid>")
+    def offlimits_post(cid: int):
+        from .offlimits import set_manual
+        db = DB(db_path)
+        if request.form.get("action") == "clear":
+            set_manual(db, cid, None)
+        else:
+            set_manual(db, cid, request.form.get("reason", "").strip() or "marked by you",
+                       request.form.get("until") or None)
+        return redirect(url_for("company", cid=cid))
 
     @app.get("/companies")
     def companies():

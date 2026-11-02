@@ -120,6 +120,83 @@ CREATE TABLE IF NOT EXISTS messages (           -- texts sent from your own phon
     sent_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS messages_phone ON messages(phone);
+-- Client pipeline: one row per company being worked.
+CREATE TABLE IF NOT EXISTS pipeline (
+    id INTEGER PRIMARY KEY,
+    company_id INTEGER UNIQUE NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    stage TEXT NOT NULL DEFAULT 'prospect',
+    contact_id INTEGER REFERENCES people(id) ON DELETE SET NULL,
+    owner TEXT,
+    next_step TEXT,
+    due_date TEXT,                             -- YYYY-MM-DD
+    lost_reason TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS activities (         -- timeline: notes, emails, texts, stage changes, replies
+    id INTEGER PRIMARY KEY,
+    company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+    person_id INTEGER REFERENCES people(id) ON DELETE SET NULL,
+    kind TEXT NOT NULL,                        -- note | email | text | stage | reply | bounce | system
+    body TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS activities_company ON activities(company_id);
+-- Follow-up sequences: ordered steps sent N days after enrolment.
+CREATE TABLE IF NOT EXISTS sequences (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sequence_steps (
+    id INTEGER PRIMARY KEY,
+    sequence_id INTEGER NOT NULL REFERENCES sequences(id) ON DELETE CASCADE,
+    step_no INTEGER NOT NULL,
+    day INTEGER NOT NULL,                      -- days after enrolment
+    channel TEXT NOT NULL,                     -- email | text
+    template_id INTEGER REFERENCES templates(id) ON DELETE SET NULL
+);
+CREATE TABLE IF NOT EXISTS enrollments (
+    id INTEGER PRIMARY KEY,
+    person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+    sequence_id INTEGER NOT NULL REFERENCES sequences(id) ON DELETE CASCADE,
+    step_no INTEGER NOT NULL DEFAULT 1,         -- next step to send
+    status TEXT NOT NULL DEFAULT 'active',     -- active | replied | finished | stopped | unsubscribed
+    started_at TEXT NOT NULL,
+    next_due TEXT,                             -- YYYY-MM-DD
+    UNIQUE (person_id, sequence_id)
+);
+CREATE TABLE IF NOT EXISTS emails (             -- emails sent or opened in your email app
+    id INTEGER PRIMARY KEY,
+    person_id INTEGER REFERENCES people(id) ON DELETE SET NULL,
+    company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+    enrollment_id INTEGER REFERENCES enrollments(id) ON DELETE SET NULL,
+    step_no INTEGER,                           -- follow-up step this email was
+    to_addr TEXT NOT NULL,
+    subject TEXT,
+    body TEXT NOT NULL,
+    method TEXT NOT NULL,                      -- smtp | mailto
+    message_id TEXT,
+    sent_at TEXT NOT NULL
+);
+-- Loxo data used for off-limits checks (refreshed by "Sync with Loxo").
+CREATE TABLE IF NOT EXISTS loxo_companies (
+    loxo_id INTEGER PRIMARY KEY,
+    name TEXT,
+    name_norm TEXT,
+    domain TEXT,
+    open_jobs INTEGER NOT NULL DEFAULT 0,
+    all_jobs INTEGER NOT NULL DEFAULT 0,
+    last_placement TEXT,                       -- most recent placement start date
+    placements INTEGER NOT NULL DEFAULT 0,
+    status_name TEXT,                          -- Loxo company status, e.g. "Current Client"
+    blocked INTEGER NOT NULL DEFAULT 0,        -- Loxo's own "blocked" flag
+    blocked_until TEXT,
+    owner TEXT,                                -- account owner in Loxo
+    synced_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS loxo_companies_domain ON loxo_companies(domain);
+CREATE INDEX IF NOT EXISTS loxo_companies_name ON loxo_companies(name_norm);
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -146,8 +223,12 @@ def default_path() -> str:
 # Columns added after the first release; created on open if missing.
 MIGRATIONS = {
     "companies": {"city": "TEXT", "industry": "TEXT", "address": "TEXT", "phone": "TEXT",
-                  "source": "TEXT"},
+                  "source": "TEXT",
+                  "offlimits_reason": "TEXT", "offlimits_until": "TEXT"},  # set by you in Zoomollo
     "jobs": {"department": "TEXT", "description": "TEXT"},
+    "templates": {"kind": "TEXT NOT NULL DEFAULT 'text'", "subject": "TEXT"},
+    "loxo_companies": {"status_name": "TEXT", "blocked": "INTEGER NOT NULL DEFAULT 0", "blocked_until": "TEXT",
+                       "owner": "TEXT"},
     "people": {"pushed_to_loxo": "INTEGER NOT NULL DEFAULT 0",
                "email_pattern": "TEXT",            # format behind the current guess
                "email_attempts": "INTEGER NOT NULL DEFAULT 0",
@@ -201,19 +282,23 @@ class DB:
         return out
 
     # --- templates & settings ---------------------------------------------------
-    def save_template(self, name: str, body: str, template_id: int | None = None) -> int:
+    def save_template(self, name: str, body: str, template_id: int | None = None, kind: str = "text",
+                      subject: str | None = None) -> int:
         if template_id:
-            self.conn.execute("UPDATE templates SET name = ?, body = ?, updated_at = ? WHERE id = ?",
-                              (name, body, now(), template_id))
+            self.conn.execute("UPDATE templates SET name = ?, body = ?, subject = ?, updated_at = ? WHERE id = ?",
+                              (name, body, subject, now(), template_id))
         else:
             template_id = self.conn.execute(
-                "INSERT INTO templates (name, body, created_at, updated_at) VALUES (?, ?, ?, ?)",
-                (name, body, now(), now())).lastrowid
+                "INSERT INTO templates (name, body, kind, subject, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (name, body, kind, subject, now(), now())).lastrowid
         self.conn.commit()
         return template_id
 
-    def templates(self) -> list[sqlite3.Row]:
-        return self.conn.execute("SELECT * FROM templates ORDER BY id").fetchall()
+    def templates(self, kind: str | None = "text") -> list[sqlite3.Row]:
+        if kind is None:
+            return self.conn.execute("SELECT * FROM templates ORDER BY id").fetchall()
+        return self.conn.execute("SELECT * FROM templates WHERE COALESCE(kind, 'text') = ? ORDER BY id",
+                                 (kind,)).fetchall()
 
     def template(self, template_id: int) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM templates WHERE id = ?", (template_id,)).fetchone()

@@ -2,11 +2,29 @@
 # Paste values after the = signs, save this file, then restart Zoomollo.
 # Anything left blank is simply not used.
 
-# Optional: push contacts into your Loxo account
+# --- Loxo: off-limits checks (active clients, recent placements) and pushing contacts
 LOXO_AGENCY_SLUG=
 LOXO_API_KEY=
+# Months after a placement that the company stays off-limits (default 12)
+OFFLIMITS_MONTHS=
 
-# Optional: AI message drafting runs on this computer with Ollama (https://ollama.com).
-# Leave blank for the defaults (model llama3.2 at http://localhost:11434).
+# --- Email from your own mailbox (optional; without it, "Open in email app" works with no setup)
+# Gmail / Google Workspace: SMTP_HOST=smtp.gmail.com, IMAP_HOST=imap.gmail.com, and an app password
+#   (Google Account > Security > 2-Step Verification > App passwords), not your normal password.
+# Outlook.com / Microsoft 365: many business accounts block app passwords; use "Open in email app" instead.
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASSWORD=
+# Address to send from, if different from SMTP_USER
+SMTP_FROM=
+# Read replies, unsubscribes and bounces from your inbox (uses SMTP_USER / SMTP_PASSWORD unless set below)
+IMAP_HOST=
+IMAP_USER=
+IMAP_PASSWORD=
+# Most emails Zoomollo will send per day (default 40); keeps your mailbox in good standing
+EMAIL_DAILY_LIMIT=
+
+# --- AI message drafting on this computer with Ollama (https://ollama.com); blank = defaults
 OLLAMA_MODEL=
 OLLAMA_URL=
