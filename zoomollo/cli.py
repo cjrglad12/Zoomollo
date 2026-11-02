@@ -31,6 +31,8 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("--no-osm", action="store_true", help="Skip map data")
     pr.add_argument("--no-groups", action="store_true", help="Skip chamber / association member directories")
     pr.add_argument("--no-sources", action="store_true", help="Skip your saved public data sources")
+    pr.add_argument("--no-records", action="store_true",
+                    help="Skip automatic license / permit records from open-data portals")
     pr.add_argument("--no-links", action="store_true", help="Don't follow links between company sites")
 
     so = sub.add_parser("sources", help="Public data files (license lists, permits) used on every prospect run")
@@ -131,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if a.cmd == "prospect":
         res = pipeline.prospect(db, a.what, a.where, a.limit, a.pages, use_osm=not a.no_osm,
-                                use_hubs=not a.no_groups, use_sources=not a.no_sources,
+                                use_hubs=not a.no_groups, use_sources=not a.no_sources, use_records=not a.no_records,
                                 follow_links=not a.no_links, progress=print)
         print(json.dumps(res, indent=2))
 

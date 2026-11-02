@@ -135,7 +135,8 @@ def keyword_regex(what: str) -> str:
     for k, vals in SYNONYMS.items():
         if k in low + " ":
             terms.update(vals)
-    return "|".join(sorted(re.escape(t) for t in terms))
+    # "air_conditioning" (map-data spelling) should also match "air conditioning" / "air-conditioning".
+    return "|".join(sorted(re.escape(t).replace("_", "[ _-]") for t in terms))
 
 
 def osm_companies(what: str, where: str, limit: int = 200) -> list[Candidate]:

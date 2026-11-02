@@ -40,7 +40,7 @@ COLUMNS = {
     "state": r"^(business_|mailing_|contractor_|physical_)?state$",
     "kind": r"license_?type|license_?class|^type$|category|classification|trade|occupation|naics|"
             r"industry|work_?class|permit_?type|description|specialty|profession",
-    "contact": r"owner|qualif|principal|contact_?name|responsible|licensee_?name|^person",
+    "contact": r"owner|qualif|principal|contact_?name|responsible|licensee_?name|^person|contractor_full_name",
 }
 
 
@@ -101,6 +101,7 @@ def candidates_from_rows(rows: list[dict], what: str, where: str, label: str) ->
     kw = re.compile(rf"\b({rx})", re.I) if rx else None
     city, state = split_where(where)
     out: dict[str, Candidate] = {}
+    counts: dict[str, int] = {}
 
     def val(row, field):
         v = row.get(cols[field]) if field in cols else None
@@ -133,8 +134,20 @@ def candidates_from_rows(rows: list[dict], what: str, where: str, label: str) ->
         if contact and contact.lower() != name.lower():
             c.contact_name = contact.title() if contact.isupper() else contact
             c.contact_title = "Owner / license holder"
-        out.setdefault(c.key, c)
-    return list(out.values())
+        counts[c.key] = counts.get(c.key, 0) + 1
+        if c.key not in out:
+            out[c.key] = c
+        else:  # same business again (e.g. another permit): fill gaps
+            cur = out[c.key]
+            for f in ("phone", "email", "address", "domain", "contact_name", "contact_title"):
+                if not getattr(cur, f) and getattr(c, f):
+                    setattr(cur, f, getattr(c, f))
+    # Businesses on many records (e.g. many permits this year) are the most active: list them first.
+    ranked = sorted(out.values(), key=lambda c: -counts[c.key])
+    for c in ranked:
+        if counts[c.key] > 1:
+            c.sources = {f"{label} ({counts[c.key]} records)"}
+    return ranked
 
 
 def from_source(source: str, what: str, where: str, label: str | None = None) -> list[Candidate]:

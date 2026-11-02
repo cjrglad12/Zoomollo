@@ -42,13 +42,20 @@ No search engines or paid services. Zoomollo reads public sources directly with 
 
 1. **Map data.** Businesses inside the city's map boundary whose type or name matches your words, from OpenStreetMap's free public servers (often with website, phone and address).
 2. **Chambers of commerce and business associations** in the city (also found on the map). Their member directories are crawled, industry categories first, and each member website is checked: its homepage has to mention the industry.
-3. **Your public data sources** (see below): license lists, permit records, business registrations.
-4. **Links between companies.** Partner, supplier and client links on the company websites it crawls. A linked site is kept only if its homepage mentions the industry and the city or state.
-5. **Website guessing.** For businesses listed without a website, likely addresses (name.com, name.net…) are tried. One is accepted only if it shows the business's phone number, or its name plus the city/state.
+3. **License and permit records, found automatically.** Zoomollo looks up the city's and state's government open-data portals, searches their catalogs for contractor/professional license lists, building permits and business registrations that match the industry, and reads the matching businesses. Businesses on several lists, or with the most permits, come first; owners and license holders become people at the company.
+4. **Your own public data sources** (see below), for portals that aren't searched automatically.
+5. **Links between companies.** Partner, supplier and client links on the company websites it crawls. A linked site is kept only if its homepage mentions the industry and the city or state.
+6. **Website guessing.** For businesses listed without a website, likely addresses (name.com, name.net…) are tried. One is accepted only if it shows the business's phone number, or its name plus the city/state.
 
 General words such as *commercial*, *residential* or *local* don't count as a match on their own. Directories (Yelp, BBB, Indeed, LinkedIn…) and staffing/recruiting firms are always skipped.
 
-### Public data sources
+### Automatic license and permit records
+
+Many states (Texas, Washington, Colorado, New York, Illinois, Connecticut…) and cities (Austin, Chicago, New York, San Francisco, Seattle, Dallas…) publish license and permit data on open-data portals that share one platform. Zoomollo knows the main ones and also tries common addresses such as `data.<city><state>.gov` and `data.cityof<city>.org`. Portals on other platforms aren't searched automatically: add their CSV/JSON links as your own sources (below). Turn it off for a run with `--no-records`.
+
+**Not included: SAM.gov** (federal contractor registrations). Its free personal API key allows only about 10 requests a day, which isn't enough to be useful.
+
+### Your own public data sources
 
 Government websites publish lists that are great for finding companies: state contractor and professional license lists, city building permits (contractor name and phone), business registrations. Most offer a **CSV download** or an open-data **JSON link** (often `data.<city>.gov/resource/xxxx-xxxx.json`).
 
@@ -112,7 +119,7 @@ Rules live in `zoomollo/exclusions.py`; edit the lists there to change them.
 
 ## What Zoomollo connects to
 
-- The websites it crawls (company sites, chamber/association sites, and the government data links you add).
+- The websites it crawls (company sites, chamber/association sites, government open-data portals, and the data links you add). If a portal's own catalog search doesn't answer, the open-data platform's shared catalog for that portal is used.
 - OpenStreetMap's free public servers, for map lookups.
 - Companies' own job boards (Greenhouse, Lever, Ashby, Workable) when their careers page links to one.
 - Your own texting app (Messages / your phone), only when you tap a send button or scan a QR code.
