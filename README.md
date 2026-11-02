@@ -112,7 +112,20 @@ Every company gets a **hiring score** (0–100) with the reasons behind it:
 | Past client in Loxo (warm) | +5 |
 | Off-limits | score 0 |
 
-A role only counts while it's still listed (seen in the last 30 days). The **Companies** tab is sorted by score (tick *Only with roles in my niche* to focus), the **Jobs** tab marks roles that *fit my desk*, each company page shows its breakdown, and the **Pipeline** tab lists the best accounts not yet in your pipeline. Command line: `zoomollo desk --titles "..."` and `zoomollo top`.
+A role only counts while it's still listed (seen in the last 30 days, and not closed). The **Companies** tab is sorted by score (tick *Only with roles in my niche* to focus), the **Jobs** tab marks roles that *fit my desk*, each company page shows its breakdown, and the **Pipeline** tab lists the best accounts not yet in your pipeline. Command line: `zoomollo desk --titles "..."` and `zoomollo top`.
+
+## This week: what changed
+
+While Zoomollo is open it re-checks each company's website and job boards every 7 days (`RECHECK_DAYS`), up to 20 companies an hour (`RECHECK_PER_HOUR`), pipeline companies and high scorers first. The **This week** tab shows what changed in the last 7–90 days, best accounts first, with *Only my niche* and *Only my pipeline* filters:
+
+| Change | What it means |
+|---|---|
+| **Reposted role** | a role that had closed is listed again: they couldn't fill it (strongest signal, +10 to the score) |
+| **New role** | posted since the last check (+5 if it's in your niche) |
+| **New leader** | a manager or more senior person appeared on their site; new managers often build their team (+5) |
+| **Role closed or filled** | missing two checks in a row; ask who filled it, or whether it's on hold |
+
+The first look at a company is the baseline, so a new prospect run doesn't flood the list. A site that doesn't load never closes roles. Changes at companies in your pipeline also go into their timeline and a list on the Pipeline tab. Command line: `zoomollo recheck`, `zoomollo changes --days 7`.
 
 ## Pipeline, follow-ups and email
 

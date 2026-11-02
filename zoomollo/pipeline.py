@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 import requests
 
 from .crawler import Crawler, normalize_domain
-from .db import DB, now
+from .db import DB, now, now_precise
 from .exclusions import is_staffing_domain, staffing_signal
 from .extract import is_role_email, looks_like_name, normalize_phone, social_kind
 from .jobboards import fetch_jobs
@@ -44,6 +44,7 @@ def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
         found["blocked"] = "staffing / recruiting company"
         return found
     company_id = db.company(domain, domain=domain)
+    run_started = now_precise()
     crawler = Crawler(max_pages=max_pages, delay=delay, region=region)
     ats: set[tuple[str, str]] = set()
 
@@ -96,18 +97,41 @@ def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
             found["jobs"] += 1
         db.commit()
 
+    loaded = {"website"} if found["pages"] else set()  # sources that answered this time
     if import_ats:
         for board, slug in sorted(ats):
             try:
-                found["jobs"] += import_jobs(db, board, slug, domain=domain)["jobs"]
+                found["jobs"] += import_jobs(db, board, slug, domain=domain, mark_checked=False)["jobs"]
+                loaded.add(board)
             except (requests.RequestException, ValueError) as e:
                 log.info("job board %s:%s failed: %s", board, slug, e)
 
+    found["closed"] = reconcile_jobs(db, company_id, run_started, loaded)
     learn_pattern(db, company_id)
-    db.update_company(company_id, last_crawled=now())
+    if found["pages"]:
+        db.update_company(company_id, last_crawled=now(), last_checked=now())
     db.commit()
     assign_hiring_managers(db, company_id)
     return found
+
+
+def reconcile_jobs(db: DB, company_id: int, run_started: str, sources: set[str]) -> int:
+    """Roles not seen this time (from a source that did load) get a strike; two strikes
+    in a row and the role is marked closed. Returns how many closed."""
+    co = db.company_row(company_id)
+    if not sources or not co or not co["last_checked"]:
+        return 0  # first look at this company, or nothing loaded: nothing to compare against
+    marks = ",".join("?" * len(sources))
+    db.conn.execute(
+        f"UPDATE jobs SET missed_checks = missed_checks + 1 WHERE company_id = ? AND closed_at IS NULL "
+        f"AND board IN ({marks}) AND COALESCE(last_seen, first_seen) < ?", (company_id, *sources, run_started))
+    gone = db.conn.execute("SELECT id, title FROM jobs WHERE company_id = ? AND closed_at IS NULL AND missed_checks >= 2",
+                           (company_id,)).fetchall()
+    for j in gone:
+        db.conn.execute("UPDATE jobs SET closed_at = ? WHERE id = ?", (now(), j["id"]))
+        db.add_event(company_id, "job_gone", f"Role closed or filled: {j['title']}", job_id=j["id"])
+    db.commit()
+    return len(gone)
 
 
 def learn_pattern(db: DB, company_id: int) -> str | None:
@@ -140,7 +164,8 @@ def learn_pattern(db: DB, company_id: int) -> str | None:
 # --- job boards -------------------------------------------------------------
 
 def import_jobs(db: DB, board: str, slug: str, domain: str | None = None,
-                region: str = "US", company_id: int | None = None) -> dict:
+                region: str = "US", company_id: int | None = None, mark_checked: bool = True) -> dict:
+    run_started = now_precise()
     jobs = fetch_jobs(board, slug, region)
     if company_id is None:
         key = normalize_domain(domain) if domain else f"{board}:{slug}"
@@ -153,6 +178,10 @@ def import_jobs(db: DB, board: str, slug: str, domain: str | None = None,
         for p in j.phones:
             phones += db.add_contact(company_id, "phone", p, "company", source_url=j.url)
     db.commit()
+    if mark_checked:  # standalone import (not part of a site crawl)
+        reconcile_jobs(db, company_id, run_started, {board})
+        db.update_company(company_id, last_checked=now())
+        db.commit()
     return {"jobs": len(jobs), "emails": emails, "phones": phones}
 
 

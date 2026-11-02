@@ -76,8 +76,8 @@ PAGE = """<!doctype html>
 :root[data-theme="dark"]{--bg:#141413;--card:#1e1e1c;--ink:#ececE8;--muted:#9a9a94;--line:#2e2e2b;--accent:#7d9bff;--chip:#232a45;--hm:#3a2f12;--hmink:#f3cd6d;
 --ok-bg:#14361f;--ok-ink:#86efac;--bad-bg:#3f1515;--bad-ink:#fca5a5;--danger:#ea580c;--seg:#2a2a27;color-scheme:dark}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
-header{display:flex;gap:20px;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line);background:var(--card);flex-wrap:wrap}
-header b{font-size:18px}nav{display:flex;gap:14px;flex-wrap:wrap}nav a{color:var(--muted);text-decoration:none}nav a.on{color:var(--ink);font-weight:600}
+header{display:flex;gap:14px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--card);flex-wrap:wrap}
+header b{font-size:18px}nav{display:flex;gap:11px;flex-wrap:wrap}nav a{color:var(--muted);text-decoration:none}nav a.on{color:var(--ink);font-weight:600}
 main{max-width:1240px;margin:0 auto;padding:20px 16px}
 .stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}.stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 14px;min-width:96px}
 .stat span{display:block;color:var(--muted);font-size:12px}.stat strong{font-size:19px}
@@ -103,10 +103,10 @@ form.fb{display:inline}form.fb button{padding:1px 7px;font-size:12px;border-radi
 form.fb button.no{background:var(--danger)}button.ghost,form.fb button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
 .st-confirmed,.st-found{background:var(--ok-bg);color:var(--ok-ink)}.st-failed{background:var(--bad-bg);color:var(--bad-ink)}.st-catch_all{background:var(--hm);color:var(--hmink)}
 /* Theme / layout switches */
-.toggles{display:flex;gap:10px;margin-left:auto;flex-wrap:wrap}
+.toggles{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
 .seg{display:inline-flex;align-items:center;background:var(--seg);border:1px solid var(--line);border-radius:10px;padding:3px;gap:2px}
 .seg-l{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:0 6px 0 6px}
-.seg button{background:transparent;color:var(--ink);border:none;border-radius:7px;padding:6px 10px;font-size:13px;white-space:nowrap}
+.seg button{background:transparent;color:var(--ink);border:none;border-radius:7px;padding:6px 8px;font-size:13px;white-space:nowrap}
 .seg button[aria-pressed="true"]{background:var(--accent);color:#fff;font-weight:600}
 .seg button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 /* Mobile layout: stacked cards, bigger tap targets */
@@ -159,7 +159,7 @@ a.msg{text-decoration:none;padding:1px 6px;border:1px solid var(--line);border-r
 a{color:var(--accent)}.warn{background:var(--hm);color:var(--hmink);padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:12px}
 </style></head><body>
 <header><div class="brand"><b>Zoomollo</b></div><nav>
-{% for t,label in [('find','Prospect'),('pipeline_page','Pipeline'),('people','People'),('companies','Companies'),('contacts','Contacts'),('jobs','Jobs'),('messages','Messages')] %}
+{% for t,label in [('find','Prospect'),('changes','This week'),('pipeline_page','Pipeline'),('people','People'),('companies','Companies'),('contacts','Contacts'),('jobs','Jobs'),('messages','Messages')] %}
 <a href="{{ url_for(t) }}" class="{{ 'on' if tab==t }}">{{ label }}</a>{% endfor %}</nav>
 <div class="toggles">
 <div class="seg" role="group" aria-label="Theme"><span class="seg-l">Theme</span>
@@ -481,6 +481,9 @@ Workspace accounts: your admin may need to allow app passwords. Microsoft 365: u
 </div>
 {% if log %}<div class="log card" style="margin-top:12px">{{ log|join('\n') }}</div>{% endif %}
 
+{% if pipe_changes %}<div class="section"><b>Changes at your pipeline companies</b> <span class="muted">· last 7 days · <a href="{{ url_for('changes', mine=1) }}">all</a></span></div>
+<div class="wrap"><table><tr><th>Company</th><th>What changed</th><th>When</th></tr>{% for e in pipe_changes[:8] %}<tr>
+<td><a href="{{ url_for('company', cid=e.company_id) }}">{{ e.company_name or e.company_key }}</a></td><td class="wraptext">{{ e.detail }}</td><td>{{ e.created_at[:10] }}</td></tr>{% endfor %}</table></div>{% endif %}
 {% if best %}<div class="section"><b>Best accounts to work next</b> <span class="muted">· highest hiring score, not in your pipeline</span></div>
 <div class="wrap"><table><tr><th>Score</th><th>Company</th><th>Why</th><th></th></tr>
 {% for sc, c in best %}<tr><td>{{ scorechip(sc) }}</td><td><a href="{{ url_for('company', cid=c.id) }}"><b>{{ c.name or c.key }}</b></a></td>
@@ -513,6 +516,22 @@ Workspace accounts: your admin may need to allow app passwords. Microsoft 365: u
 <form method="post" action="{{ url_for('pipeline_post', cid=c.company_id) }}"><input type="hidden" name="action" value="stage">
 <select name="stage" onchange="this.form.submit()">{% for k2, l2 in stages %}<option value="{{ k2 }}" {{ 'selected' if k2 == k }}>{{ l2 }}</option>{% endfor %}</select></form></div>
 {% else %}<p class="muted" style="font-size:13px">—</p>{% endfor %}</div>{% endif %}{% endfor %}</div>"""
+
+CHANGES = SCORE_MACRO + """<form class="bar">
+<select name="days" onchange="this.form.submit()">{% for d in [7, 14, 30, 90] %}<option value="{{ d }}" {{ 'selected' if d == days }}>Last {{ d }} days</option>{% endfor %}</select>
+<label class="chip" style="padding:8px 10px"><input type="checkbox" name="niche" value="1" {{ 'checked' if niche }} style="padding:0" onchange="this.form.submit()"> Only my niche</label>
+<label class="chip" style="padding:8px 10px"><input type="checkbox" name="mine" value="1" {{ 'checked' if mine }} style="padding:0" onchange="this.form.submit()"> Only my pipeline</label></form>
+<div class="card" style="margin-bottom:14px"><p style="margin:0">Companies are re-checked every {{ every }} days while Zoomollo is open (up to {{ per_hour }} an hour). {{ due_count }} due now{% if last_run %}; last re-check {{ last_run[:16].replace('T', ' ') }}{% endif %}.</p>
+<form method="post" action="{{ url_for('recheck_now') }}" style="margin-top:8px"><button {{ 'disabled' if not due_count }}>Re-check {{ [due_count, per_hour]|min }} now</button></form></div>
+{% for kind, label in kinds.items() %}<div class="section"><b>{{ label }}</b> <span class="muted">· {{ groups[kind]|length }}</span>
+{% if kind == 'job_reposted' %}<span class="muted"> · strongest signal: they couldn't fill it</span>{% elif kind == 'job_gone' %}<span class="muted"> · ask who filled it, or if it's on hold</span>{% elif kind == 'person_new' %}<span class="muted"> · new managers often build their team</span>{% endif %}</div>
+<div class="wrap"><table><tr><th>Score</th><th>Company</th><th>What changed</th><th>When</th><th></th></tr>
+{% for e in groups[kind] %}<tr><td>{% if e.score %}{{ scorechip(e.score) }}{% endif %}</td>
+<td><a href="{{ url_for('company', cid=e.company_id) }}"><b>{{ e.company_name or e.company_key }}</b></a>{% if e.city %}<br><span class="muted">{{ e.city }}</span>{% endif %}</td>
+<td class="wraptext">{% if e.job_url %}<a href="{{ e.job_url }}" target="_blank" rel="noopener">{{ e.detail }}</a>{% else %}{{ e.detail }}{% endif %}{% if e.fit %} <span class="chip fit">fits my desk</span>{% endif %}</td>
+<td>{{ e.created_at[:10] }}</td>
+<td>{% if e.stage %}<span class="chip">{{ stage_names[e.stage] }}</span>{% elif e.score and not e.score.offlimits.blocked %}<form class="fb" method="post" action="{{ url_for('pipeline_post', cid=e.company_id) }}"><input type="hidden" name="action" value="add"><button class="ghost">+ Pipeline</button></form>{% endif %}</td></tr>
+{% else %}<tr><td colspan="5" class="muted">None.</td></tr>{% endfor %}</table></div>{% endfor %}"""
 
 JOBS = """<form class="bar"><input type="search" name="q" value="{{ q }}" placeholder="Role, company, city, contact…">
 <label class="chip" style="padding:8px 10px"><input type="checkbox" name="niche" value="1" {{ 'checked' if niche }} style="padding:0"> Only my niche</label><button>Search</button>
@@ -586,7 +605,8 @@ def create_app(db_path: str | None = None) -> Flask:
             if crm.imap_configured():
                 tasks.put(("inbox", "inbox", {}))
 
-    threading.Thread(target=inbox_timer, daemon=True).start()
+    if os.environ.get("ZOOMOLLO_NO_BACKGROUND") != "1":
+        threading.Thread(target=inbox_timer, daemon=True).start()
 
     loxo_busy = threading.Lock()
 
@@ -617,7 +637,34 @@ def create_app(db_path: str | None = None) -> Flask:
                 run_loxo_sync(None)
             time.sleep(3600)
 
-    threading.Thread(target=loxo_timer, daemon=True).start()
+    if os.environ.get("ZOOMOLLO_NO_BACKGROUND") != "1":
+        threading.Thread(target=loxo_timer, daemon=True).start()
+
+    recheck_busy = threading.Lock()
+
+    def run_recheck():
+        """Re-check companies that are due (own thread: each site takes a few seconds)."""
+        from . import recheck
+        if not recheck_busy.acquire(blocking=False):
+            return
+        try:
+            db = DB(db_path)
+            recheck.run(db, progress=log.appendleft)
+            db.set_setting("recheck_at", __import__("datetime").datetime.now().isoformat(timespec="seconds"))
+        except Exception as e:  # noqa: BLE001
+            log.appendleft(f"✗ Re-check failed: {e}")
+        finally:
+            recheck_busy.release()
+
+    def recheck_timer():
+        import time
+        time.sleep(60)
+        while True:
+            run_recheck()
+            time.sleep(3600)
+
+    if os.environ.get("ZOOMOLLO_NO_BACKGROUND") != "1":
+        threading.Thread(target=recheck_timer, daemon=True).start()
 
     def render(tab, tpl, **ctx):
         db = DB(db_path)
@@ -868,7 +915,11 @@ def create_app(db_path: str | None = None) -> Flask:
         board = crm.board(db)
         from . import hiringscore
         best = [x for x in hiringscore.ranked(db, exclude_pipeline=True, limit=8) if x[0].total > 0]
+        from .recheck import changes as recent_changes
+        pipe_changes = sorted((e for g in recent_changes(db, 7, pipeline_only=True).values() for e in g),
+                              key=lambda e: e["created_at"], reverse=True)
         return render("pipeline_page", PIPELINE, due=due, board=board, stages=crm.STAGES, today=crm.today(), best=best,
+                      pipe_changes=pipe_changes,
                       total=sum(len(v) for v in board.values()), smtp=crm.smtp_configured(),
                       smtp_user=os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USER"),
                       sent_today=crm.sent_today(db), daily_limit=crm.daily_limit(),
@@ -1036,6 +1087,23 @@ def create_app(db_path: str | None = None) -> Flask:
     def desk_card(db):
         from .hiringscore import load_desk
         return render_template_string(DESK_CARD, desk=load_desk(db))
+
+    @app.get("/changes")
+    def changes():
+        from . import crm, recheck
+        db = DB(db_path)
+        days = int(request.args.get("days") or 7)
+        niche, mine = bool(request.args.get("niche")), bool(request.args.get("mine"))
+        return render("changes", CHANGES, groups=recheck.changes(db, days, niche, mine), kinds=recheck.KINDS,
+                      days=days, niche=niche, mine=mine, every=recheck.every_days(), per_hour=recheck.per_hour(),
+                      due_count=len(recheck.due(db, limit=100_000)), last_run=db.get_setting("recheck_at"),
+                      stage_names=crm.STAGE_NAMES)
+
+    @app.post("/changes/recheck")
+    def recheck_now():
+        threading.Thread(target=run_recheck, daemon=True).start()
+        log.appendleft("✓ Re-check started")
+        return redirect(url_for("changes"))
 
     @app.get("/companies")
     def companies():

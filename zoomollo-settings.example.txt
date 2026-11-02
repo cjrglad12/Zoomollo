@@ -37,6 +37,11 @@ IMAP_PASSWORD=
 # Most emails Zoomollo will send per day (default 40); keeps your mailbox in good standing
 EMAIL_DAILY_LIMIT=
 
+# --- Re-checking companies for changes (new / reposted / closed roles, new leaders)
+# Days between checks of each company (default 7) and most companies checked per hour (default 20)
+RECHECK_DAYS=
+RECHECK_PER_HOUR=
+
 # --- AI message drafting on this computer with Ollama (https://ollama.com); blank = defaults
 OLLAMA_MODEL=
 OLLAMA_URL=

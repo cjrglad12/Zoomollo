@@ -34,6 +34,16 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+def pytest_configure(config):
+    """For the whole test run: no background timers, and no real accounts even after a
+    test's own environment changes are undone."""
+    import os
+    os.environ["ZOOMOLLO_NO_BACKGROUND"] = "1"
+    for k in list(os.environ):
+        if k.startswith(("LOXO_", "SMTP_", "IMAP_", "GMAIL_")):
+            os.environ.pop(k)
+
+
 @pytest.fixture(autouse=True)
 def no_real_accounts(monkeypatch):
     """Tests never touch real Loxo / mailbox accounts, even if the machine has them configured."""

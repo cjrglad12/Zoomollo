@@ -131,7 +131,8 @@ def hiring_rows(db: DB, q: str = "", company_id: int | None = None, limit: int =
            "co.id AS company_id, co.name AS company_name, co.key AS company_key, co.domain, co.city, "
            "jc.reason, jc.rank, jc.value, p.name, p.title, p.email, p.email_status, p.phone, p.linkedin_url "
            "FROM jobs j JOIN companies co ON co.id = j.company_id "
-           "LEFT JOIN job_contacts jc ON jc.job_id = j.id LEFT JOIN people p ON p.id = jc.person_id WHERE 1=1")
+           "LEFT JOIN job_contacts jc ON jc.job_id = j.id LEFT JOIN people p ON p.id = jc.person_id "
+           "WHERE j.closed_at IS NULL")
     args: list = []
     if company_id is not None:
         sql += " AND co.id = ?"
