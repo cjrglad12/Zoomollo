@@ -90,6 +90,14 @@ def main(argv: list[str] | None = None) -> int:
     ch = sub.add_parser("changes", help="New, reposted and closed roles and new leaders")
     ch.add_argument("--days", type=int, default=7)
     ch.add_argument("--niche", action="store_true")
+    cs = sub.add_parser("candidates", help='Search candidates through the keyword lens, e.g. "tax manager, review, TX | WI"')
+    cs.add_argument("query")
+    cs.add_argument("--limit", type=int, default=20)
+    sub.add_parser("candidates-sync", help="Sync candidates from Loxo (résumés download separately)")
+    rs = sub.add_parser("resumes", help="Download Loxo résumés now")
+    rs.add_argument("--limit", type=int, default=100)
+    ad = sub.add_parser("add-resumes", help="Add résumé files (PDF, .docx, .txt) as candidates")
+    ad.add_argument("files", nargs="+")
     sub.add_parser("pipeline", help="Show the client pipeline by stage")
     sub.add_parser("due", help="Follow-ups and next steps due today")
     sub.add_parser("send-due", help="Send due follow-up emails from your mailbox (SMTP settings)")
@@ -286,6 +294,34 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"\n{label} ({len(rows)})")
                 for e in rows:
                     print(f"   {e['created_at'][:10]}  {e['company_name'] or e['company_key']}: {e['detail']}")
+
+    elif a.cmd == "candidates":
+        from . import candidates as cands
+        groups, results = cands.search(db, a.query, limit=a.limit)
+        print("Keywords: " + " · ".join(g.label for g in groups))
+        for r in results:
+            c, m = r["c"], r["match"]
+            chips = "  ".join(f"[{g.label}: {n}]" if n else f"({g.label}: -)" for g, n in zip(groups, m.hits))
+            print(f"{c['name'] or '?'} | {c['title'] or ''} | {', '.join(x for x in [c['city'], c['state']] if x)}"
+                  f"{' | ' + r['fit'] if r['fit'] else ''}\n   {chips}")
+
+    elif a.cmd == "candidates-sync":
+        from . import candidates as cands
+        print(json.dumps(cands.sync_loxo(db, progress=print)))
+
+    elif a.cmd == "resumes":
+        from . import candidates as cands
+        print(f"Downloaded {cands.fill_resumes(db, limit=a.limit, progress=print)}")
+
+    elif a.cmd == "add-resumes":
+        from pathlib import Path
+        from . import candidates as cands
+        for f in a.files:
+            try:
+                cands.add_upload(db, Path(f).name, Path(f).read_bytes())
+                print(f"✓ {f}")
+            except Exception as e:  # noqa: BLE001
+                print(f"✗ {f}: {e}")
 
     elif a.cmd == "pipeline":
         from . import crm

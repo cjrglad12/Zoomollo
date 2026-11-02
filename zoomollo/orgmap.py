@@ -28,7 +28,8 @@ _DEPARTMENTS = [
     ("sales", r"\b(sales|account executive|business development|bdr|sdr|revenue|cro|"
               r"account manager|estimator)\b"),
     ("marketing", r"\b(marketing|brand|growth|content|seo|communications|cmo|demand gen)\b"),
-    ("finance", r"\b(finance|financial|accounting|accountant|controller|cfo|bookkeep\w*|payroll|treasur\w*)\b"),
+    ("finance", r"\b(finance|financial|accounting|accountant|controller|cfo|bookkeep\w*|payroll|treasur\w*|"
+                r"tax|taxation|audit|auditor|assurance|cpa|reconcil\w*|fp&a|accounts payable|accounts receivable)\b"),
     ("customer", r"\b(customer success|customer service|support|client services|account management)\b"),
     ("product", r"\b(product|ux|ui|design|designer)\b"),
     ("it", r"\b(it|information technology|systems administrator|cio|network|helpdesk|infrastructure)\b"),

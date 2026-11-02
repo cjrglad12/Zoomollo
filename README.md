@@ -127,6 +127,30 @@ While Zoomollo is open it re-checks each company's website and job boards every 
 
 The first look at a company is the baseline, so a new prospect run doesn't flood the list. A site that doesn't load never closes roles. Changes at companies in your pipeline also go into their timeline and a list on the Pipeline tab. Command line: `zoomollo recheck`, `zoomollo changes --days 7`.
 
+## Candidates and the keyword lens
+
+The **Candidates** tab holds your candidates, from Loxo and/or résumé files you upload (PDF, Word .docx, text). Everything, résumés included, is stored only on your computer.
+
+- **From Loxo:** *Sync candidates from Loxo* copies the candidate list (title, company, location, skills, tags, contact details), skipping client contacts; it re-syncs weekly by itself. Résumés download gradually in the background (a few seconds each), and candidates matching your current search, or that you open, jump the queue. A Loxo person with no résumé on file still matches on their profile.
+- **Upload:** name, email, phone, city/state and title are picked up from the résumé.
+
+### Keyword lens
+
+Search in plain English, e.g. **tax manager with experience reviewing who lives in Texas or Wisconsin**, or exactly, e.g. **tax manager, review, Texas | Wisconsin** (commas separate keyword groups; `|` or "or" separate alternatives). Each group gets a colour:
+
+- every candidate shows one chip per group: **filled with the match count** when found, grey when missing, with a *strong fit* (all groups) or *possible fit* (half or more) label and highlighted extracts;
+- opening a candidate shows the **résumé with every match highlighted in its group's colour**; click a chip to jump through its matches.
+
+Words match their forms (*reviewing* ~ review, reviewed, reviewer; *manager* ~ managing, management), two-word titles also match reversed (*Manager, Tax*), and states match their abbreviation (*Texas* ~ TX, in capitals only).
+
+### From candidate to client
+
+- **Companies hiring for this** (on each candidate): open roles whose title matches the candidate's, best hiring score first, with the likely hiring manager. Off-limits companies are flagged and can't be pitched without an override.
+- **Pitch** writes an email to that hiring manager from the *Email: candidate intro* template, describing the candidate **anonymously** (title, years of experience, location; no name or current employer). Send from your mailbox or open it in your email app; the company moves to *Contacted* and the email goes in its timeline.
+- **Find candidates** on any open role (Jobs tab, company pages) runs the lens with that role's title and location.
+
+Command line: `zoomollo candidates "tax manager, review, TX | WI"`, `zoomollo candidates-sync`, `zoomollo resumes`, `zoomollo add-resumes *.pdf`.
+
 ## Pipeline, follow-ups and email
 
 The **Pipeline** tab is where business development happens.

@@ -183,6 +183,9 @@ def ensure_starters(db: DB) -> None:
     if not db.templates("email"):
         for name, subject, body in STARTER_EMAILS:
             db.save_template(name, body, kind="email", subject=subject)
+    from .candidates import PITCH_TEMPLATE
+    if not any(t["name"] == PITCH_TEMPLATE[0] for t in db.templates("email")):
+        db.save_template(PITCH_TEMPLATE[0], PITCH_TEMPLATE[2], kind="email", subject=PITCH_TEMPLATE[1])
     if not db.conn.execute("SELECT 1 FROM sequences").fetchone():
         name, steps = STARTER_SEQUENCE
         sid = db.conn.execute("INSERT INTO sequences (name) VALUES (?)", (name,)).lastrowid

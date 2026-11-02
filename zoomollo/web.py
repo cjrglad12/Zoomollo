@@ -109,6 +109,7 @@ form.fb button.no{background:var(--danger)}button.ghost,form.fb button.ghost{bac
 .seg button{background:transparent;color:var(--ink);border:none;border-radius:7px;padding:6px 8px;font-size:13px;white-space:nowrap}
 .seg button[aria-pressed="true"]{background:var(--accent);color:#fff;font-weight:600}
 .seg button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (max-width:1440px){html:not(.mobile) .seg-l{display:none}html:not(.mobile) nav{gap:9px;font-size:14px}}
 /* Mobile layout: stacked cards, bigger tap targets */
 html.mobile header{flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:10px;padding:12px}
 html.mobile .brand{display:flex;justify-content:space-between;align-items:center}
@@ -135,7 +136,15 @@ html.mobile td.wraptext{min-width:0}
 html.mobile form.fb button{padding:6px 12px;font-size:14px;margin:4px 4px 0 0}
 html.mobile .tpl textarea{min-height:220px}html.mobile .sub{font-size:14px}html.mobile h2{font-size:21px}
 html.forced-mobile body{max-width:480px;margin:0 auto;border-left:1px solid var(--line);border-right:1px solid var(--line);min-height:100vh}
-td.em{white-space:normal;min-width:230px;max-width:300px}.score{display:inline-block;min-width:38px;text-align:center;font-weight:700;border-radius:8px;padding:3px 6px;background:var(--chip)}
+td.em{white-space:normal;min-width:230px;max-width:300px}mark{border-radius:3px;padding:0 2px;color:#111}
+.k0{background:#fde68a}.k1{background:#bbf7d0}.k2{background:#bfdbfe}.k3{background:#fbcfe8}
+.k4{background:#fed7aa}.k5{background:#ddd6fe}.k6{background:#99f6e4}.k7{background:#d9f99d}
+.kchip{display:inline-block;border-radius:20px;padding:3px 10px;font-size:13px;margin:2px 4px 2px 0;color:#111;font-weight:600;border:0;cursor:pointer}
+.kchip.miss{background:transparent!important;color:var(--muted);border:1px dashed var(--line);font-weight:400;cursor:default}
+.kchip .n{font-weight:700;margin-left:4px;opacity:.75}.resume{white-space:pre-wrap;font-size:14px;line-height:1.55;background:var(--card);
+border:1px solid var(--line);border-radius:10px;padding:16px;max-height:75vh;overflow:auto}.cand{padding:12px 14px}
+.snip{font-size:13px;color:var(--muted);margin-top:4px}.snip mark{font-size:13px}.fitlbl{font-size:12px;font-weight:600;color:var(--ok-ink)}
+.score{display:inline-block;min-width:38px;text-align:center;font-weight:700;border-radius:8px;padding:3px 6px;background:var(--chip)}
 .score.s3{background:var(--ok-bg);color:var(--ok-ink)}.score.s2{background:var(--hm);color:var(--hmink)}.score.s0{opacity:.55}
 .why{font-size:13px;color:var(--muted)}.why b{color:var(--ink);font-weight:600}.fit{background:var(--ok-bg);color:var(--ok-ink)}
 .ol-blocked{background:var(--bad-bg);color:var(--bad-ink)}.ol-warn{background:var(--hm);color:var(--hmink)}
@@ -159,7 +168,7 @@ a.msg{text-decoration:none;padding:1px 6px;border:1px solid var(--line);border-r
 a{color:var(--accent)}.warn{background:var(--hm);color:var(--hmink);padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:12px}
 </style></head><body>
 <header><div class="brand"><b>Zoomollo</b></div><nav>
-{% for t,label in [('find','Prospect'),('changes','This week'),('pipeline_page','Pipeline'),('people','People'),('companies','Companies'),('contacts','Contacts'),('jobs','Jobs'),('messages','Messages')] %}
+{% for t,label in [('find','Prospect'),('changes','This week'),('pipeline_page','Pipeline'),('people','People'),('companies','Companies'),('contacts','Contacts'),('jobs','Jobs'),('candidates','Candidates'),('messages','Messages')] %}
 <a href="{{ url_for(t) }}" class="{{ 'on' if tab==t }}">{{ label }}</a>{% endfor %}</nav>
 <div class="toggles">
 <div class="seg" role="group" aria-label="Theme"><span class="seg-l">Theme</span>
@@ -308,7 +317,7 @@ COMPANY = EMAIL_MACRO + LINKEDIN_MACRO + OL_MACRO + SCORE_MACRO + """<h2>{{ co.n
 </div>{% endfor %}</div>{% endfor %}</div>
 {% else %}<p class="muted">No people found yet.</p>{% endif %}
 
-<div class="section"><b>Open roles × contacts</b> <span class="muted">· {{ jobs|length }}</span></div>
+<div class="section"><b>Open roles × contacts</b> <span class="muted">· <a href="{{ url_for('candidates', q=(jobs|map(attribute='title')|first or '')) }}">find candidates</a></span> <span class="muted">· {{ jobs|length }}</span></div>
 <div class="wrap"><table><tr><th>Role</th><th>Location</th><th>Source</th><th>Matched contacts</th></tr>
 {% for j in jobs %}<tr><td>{% if j.url %}<a href="{{ j.url }}" target="_blank" rel="noopener">{{ j.title }}</a>{% else %}{{ j.title }}{% endif %}</td>
 <td>{{ j.location or '' }}</td><td><span class="chip">{{ j.board }}</span></td><td class="wraptext">{% for m in matches.get(j.id, []) %}
@@ -533,13 +542,82 @@ CHANGES = SCORE_MACRO + """<form class="bar">
 <td>{% if e.stage %}<span class="chip">{{ stage_names[e.stage] }}</span>{% elif e.score and not e.score.offlimits.blocked %}<form class="fb" method="post" action="{{ url_for('pipeline_post', cid=e.company_id) }}"><input type="hidden" name="action" value="add"><button class="ghost">+ Pipeline</button></form>{% endif %}</td></tr>
 {% else %}<tr><td colspan="5" class="muted">None.</td></tr>{% endfor %}</table></div>{% endfor %}"""
 
+KCHIPS = """{% macro kchips(groups, m, jump=False) %}{% for g in groups %}{% set n = m.hits[loop.index0] if m and m.hits else 0 %}
+<span class="kchip {{ 'k' ~ g.color if n else 'miss' }}" {% if jump and n %}onclick="zmNext({{ g.color }})" title="Jump to next match"{% endif %}>{{ g.label }}{% if n %}<span class="n">{{ n }}</span>{% endif %}</span>{% endfor %}{% endmacro %}"""
+
+CANDIDATES = KCHIPS + """<form class="bar"><input type="search" name="q" value="{{ q }}" placeholder="e.g. tax manager with experience reviewing who lives in Texas or Wisconsin" style="flex:3">
+<select name="source"><option value="">All candidates</option><option value="loxo" {{ 'selected' if src == 'loxo' }}>From Loxo</option><option value="upload" {{ 'selected' if src == 'upload' }}>Uploaded</option></select><button>Search</button></form>
+{% if groups %}<div class="card" style="margin-bottom:12px"><div>{% for g in groups %}<span class="kchip k{{ g.color }}">{{ g.label }}</span>{% endfor %}</div>
+<div class="muted" style="font-size:12px;margin-top:6px">Searching for: <span class="v">{{ describe }}</span>. Edit it above for exact control: commas separate keyword groups, "|" separates alternatives. Words match their forms (review ~ reviewed, reviewer); states match their abbreviation.</div></div>{% endif %}
+<div class="grid" style="margin-bottom:12px">
+<div class="card"><h3>Candidates</h3><p>{{ counts.total }} candidates ({{ counts.loxo }} from Loxo, {{ counts.uploaded }} uploaded), {{ counts.with_resume }} with a résumé.{% if counts.backlog %} {{ counts.backlog }} Loxo résumés still to download (they come in the background; search results first).{% endif %}</p>
+{% if loxo_on %}<form method="post" action="{{ url_for('candidates_tools') }}" class="row"><button name="action" value="sync">Sync candidates from Loxo</button>
+{% if counts.backlog %}<button name="action" value="resumes" class="ghost">Download 50 résumés now</button>{% endif %}</form>{% if synced %}<p class="muted" style="font-size:12px;margin-top:6px">Last synced {{ synced[:16].replace('T', ' ') }}.</p>{% endif %}{% endif %}</div>
+<form class="card" method="post" action="{{ url_for('candidates_upload') }}" enctype="multipart/form-data"><h3>Upload résumés</h3>
+<p>PDF, Word (.docx) or text. Read on this computer; name, email, phone and location are picked up automatically.</p>
+<input type="file" name="files" multiple accept=".pdf,.docx,.txt,.rtf" required style="width:100%;margin-bottom:8px"><button>Upload</button>
+{% if upload_msg %}<p class="muted" style="margin-top:8px">{{ upload_msg }}</p>{% endif %}</form></div>
+{% if q %}<div class="section"><b>{{ results|length }} candidate{{ '' if results|length == 1 else 's' }}</b> <span class="muted">· best matches first</span></div>{% endif %}
+{% for r in results %}{% set c = r.c %}<div class="card cand" style="margin-bottom:10px">
+<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><div><a href="{{ url_for('candidate', cid=c.id, q=q) }}"><b>{{ c.name or 'Unnamed' }}</b></a>
+{% if r.fit %} <span class="fitlbl">· {{ r.fit }}</span>{% endif %}<br><span class="muted">{{ c.title or '' }}{% if c.company %} · {{ c.company }}{% endif %}{% if c.city or c.state %} · {{ [c.city, c.state]|select|join(', ') }}{% endif %}</span></div>
+<div class="muted" style="font-size:12px;text-align:right">{{ 'Loxo' if c.source == 'loxo' else 'Uploaded' }}{% if not c.resume_text %}<br>{{ 'résumé downloading…' if c.source == 'loxo' and not c.resume_status else 'no résumé' }}{% endif %}</div></div>
+{% if groups %}<div style="margin-top:6px">{{ kchips(groups, r.match) }}</div>{% for sn in r.snips %}<div class="snip">{{ sn|safe }}</div>{% endfor %}{% endif %}</div>
+{% else %}{% if q %}<p class="muted">No candidates match any of these keywords.</p>{% elif not counts.total %}<p class="muted">No candidates yet: sync from Loxo or upload résumés.</p>{% endif %}{% endfor %}
+{% if not q and results %}<p class="muted">Type a search above to rank candidates and see their keywords.</p>{% endif %}"""
+
+CANDIDATE = KCHIPS + OL_MACRO + SCORE_MACRO + """<h2>{{ c.name or 'Unnamed' }}</h2>
+<div class="sub">{{ c.title or '' }}{% if c.company %} · {{ c.company }}{% endif %}{% if c.city or c.state %} · {{ [c.city, c.state]|select|join(', ') }}{% endif %}
+{% if c.email %} · <a href="mailto:{{ c.email }}">{{ c.email }}</a>{% endif %}{% if c.phone %} · {{ c.phone }}{% endif %}{% if c.linkedin_url %} · <a href="{{ c.linkedin_url }}" target="_blank" rel="noopener">LinkedIn</a>{% endif %}
+· {{ 'from Loxo' if c.source == 'loxo' else 'uploaded' }}{% if years %} · about {{ years }} years' experience{% endif %}</div>
+<form class="bar" action="{{ url_for('candidate', cid=c.id) }}"><input type="search" name="q" value="{{ q }}" placeholder="View this résumé through keywords, e.g. tax manager, review, Texas | Wisconsin"><button>Highlight</button></form>
+{% if groups %}<div style="margin-bottom:10px">{{ kchips(groups, m, True) }} <span class="muted" style="font-size:12px">click a keyword to jump to its next match</span></div>{% endif %}
+<div class="grid"><div class="card big" style="padding:0;border:0">
+{% if resume %}<div class="resume" id="resume">{{ resume|safe }}</div>
+{% elif c.source == 'loxo' %}<div class="card">Résumé not downloaded yet{% if c.resume_status and c.resume_status != 'queued' %} ({{ c.resume_status }}){% endif %}.
+<form method="post" action="{{ url_for('candidate_fetch', cid=c.id) }}" style="margin-top:8px"><button>Download résumé now</button></form>
+{% if c.skills %}<div class="resume" style="margin-top:10px">{{ skills|safe }}</div>{% endif %}</div>
+{% else %}<div class="card">No résumé text.</div>{% endif %}</div></div>
+
+<div class="section"><b>Companies hiring for this</b> <span class="muted">· open roles matching “{{ c.title or '—' }}”, best hiring score first</span></div>
+<div class="wrap"><table><tr><th>Score</th><th>Role</th><th>Company</th><th>Hiring manager</th><th></th></tr>
+{% for r in jobs %}<tr><td>{% if r.score %}{{ scorechip(r.score) }}{% endif %}</td>
+<td>{% if r.job.url %}<a href="{{ r.job.url }}" target="_blank" rel="noopener">{{ r.job.title }}</a>{% else %}{{ r.job.title }}{% endif %}</td>
+<td><a href="{{ url_for('company', cid=r.job.company_id) }}">{{ r.job.company_name or r.job.company_key }}</a> {{ olbadge(r.offlimits) }}</td>
+<td>{% if r.manager %}{{ r.manager.name }}<br><span class="muted">{{ r.manager.title or '' }}{% if r.manager.email %} · {{ r.manager.email }}{% endif %}</span>{% else %}<span class="muted">not found yet</span>{% endif %}</td>
+<td>{% if not r.offlimits.blocked %}<a class="btn" href="{{ url_for('pitch_page', candidate=c.id, job=r.job.id, q=q) }}">Pitch</a>{% endif %}</td></tr>
+{% else %}<tr><td colspan="5" class="muted">{% if c.title %}No open roles like this yet. Prospect for companies hiring "{{ c.title }}".{% else %}Add the candidate's title to find matching roles.{% endif %}</td></tr>{% endfor %}</table></div>
+<script>
+var zmPos = {};
+function zmNext(k) {
+  var marks = document.querySelectorAll("#resume mark.k" + k); if (!marks.length) return;
+  zmPos[k] = ((zmPos[k] === undefined ? -1 : zmPos[k]) + 1) % marks.length;
+  var el = marks[zmPos[k]]; el.scrollIntoView({block: "center", behavior: "smooth"});
+  el.style.outline = "3px solid #111"; setTimeout(function () { el.style.outline = ""; }, 900);
+}
+</script>"""
+
+PITCH = """<h2>Pitch {{ c.title or 'candidate' }} to {{ company }}</h2><div class="sub">{{ job.title }}{% if p.person %} · to {{ p.person.name }}{% if p.person.title %}, {{ p.person.title }}{% endif %}{% endif %}
+· candidate details are anonymised (no name or current employer)</div>
+{% if offl.level %}<div class="warn">{{ offl.reason }}</div>{% endif %}
+{% if not p.to %}<div class="warn">No email for this role's hiring manager yet. Find one on the <a href="{{ url_for('company', cid=job.company_id) }}">company page</a>, or copy the text below.</div>{% endif %}
+<form method="post" action="{{ url_for('pitch_send') }}" class="card tpl">
+<input type="hidden" name="candidate" value="{{ c.id }}"><input type="hidden" name="job" value="{{ job.id }}">
+<input name="to" value="{{ p.to or '' }}" placeholder="To" style="width:100%;margin-bottom:6px">
+<input name="subject" value="{{ p.subject }}" style="width:100%;margin-bottom:6px"><textarea name="body" style="min-height:260px">{{ p.body }}</textarea>
+{% if p.missing %}<p class="muted">Filled generically: {{ p.missing|join(', ') }}.</p>{% endif %}
+{% if offl.blocked %}<label class="chip" style="padding:8px 10px"><input type="checkbox" name="override" value="1" required style="padding:0"> Send anyway</label>{% endif %}
+<div class="row" style="margin-top:8px">{% if smtp %}<button name="action" value="smtp">Send</button>{% endif %}<button name="action" value="mailto" class="{{ 'ghost' if smtp }}">Open in email app</button>
+<a class="btn" href="{{ url_for('candidate', cid=c.id, q=q) }}">Back</a></div></form>"""
+
 JOBS = """<form class="bar"><input type="search" name="q" value="{{ q }}" placeholder="Role, company, city, contact…">
 <label class="chip" style="padding:8px 10px"><input type="checkbox" name="niche" value="1" {{ 'checked' if niche }} style="padding:0"> Only my niche</label><button>Search</button>
 <a class="btn" href="{{ url_for('export_hiring', q=q) }}">Export roles × contacts CSV</a></form>
 <div class="wrap"><table><tr><th>Company</th><th>Role</th><th>Location</th><th>Source</th><th>Best contacts</th></tr>
 {% for j in rows %}<tr><td><a href="{{ url_for('company', cid=j.company_id) }}">{{ j.company_name or j.company_key }}</a></td>
 <td>{% if j.url %}<a href="{{ j.url }}" target="_blank" rel="noopener">{{ j.title }}</a>{% else %}{{ j.title }}{% endif %}
-{% if fits[j.id][0] %} <span class="chip fit">fits my desk</span>{% elif desk_set %} <span class="muted" style="font-size:12px">{{ fits[j.id][1] }}</span>{% endif %}</td>
+{% if fits[j.id][0] %} <span class="chip fit">fits my desk</span>{% elif desk_set %} <span class="muted" style="font-size:12px">{{ fits[j.id][1] }}</span>{% endif %}
+<br><a style="font-size:12px" href="{{ url_for('candidates', q=j.title ~ ((', ' ~ j.location) if j.location else '')) }}">Find candidates</a></td>
 <td>{{ j.location or '' }}</td><td><span class="chip">{{ j.board }}</span></td>
 <td class="wraptext">{% for m in matches.get(j.id, [])[:3] %}<div><span class="reason">{{ m.reason }}</span> {{ m.name or '' }}
 <span class="v">{{ m.email or m.value or '' }}</span></div>{% else %}<span class="muted">none yet</span>{% endfor %}</td></tr>
@@ -665,6 +743,56 @@ def create_app(db_path: str | None = None) -> Flask:
 
     if os.environ.get("ZOOMOLLO_NO_BACKGROUND") != "1":
         threading.Thread(target=recheck_timer, daemon=True).start()
+
+    cand_busy = threading.Lock()
+
+    def run_candidate_sync():
+        from . import candidates as cands
+        if not cand_busy.acquire(blocking=False):
+            log.appendleft("Candidate sync already running")
+            return
+        try:
+            r = cands.sync_loxo(DB(db_path), progress=log.appendleft)
+            log.appendleft(f"✓ Candidates synced: {r['candidates']} candidates ({r['people']} Loxo people read)")
+        except Exception as e:  # noqa: BLE001
+            log.appendleft(f"✗ Candidate sync failed: {e}")
+        finally:
+            cand_busy.release()
+
+    resume_busy = threading.Lock()
+
+    def run_resume_fill(n: int):
+        from . import candidates as cands
+        if not resume_busy.acquire(blocking=False):
+            return
+        try:
+            cands.fill_resumes(DB(db_path), limit=n, progress=log.appendleft)
+        except Exception as e:  # noqa: BLE001
+            log.appendleft(f"✗ Résumé download failed: {e}")
+        finally:
+            resume_busy.release()
+
+    def candidate_timer():
+        """Weekly candidate sync; résumés download a few at a time (search results first)."""
+        import time
+        from datetime import datetime, timedelta, timezone
+        from . import loxo
+        time.sleep(20)
+        while True:
+            if loxo.configured():
+                db = DB(db_path)
+                last = db.get_setting("candidates_synced_at")
+                try:
+                    stale = not last or datetime.fromisoformat(last) < datetime.now(timezone.utc) - timedelta(days=7)
+                except ValueError:
+                    stale = True
+                if stale:
+                    run_candidate_sync()
+                run_resume_fill(25)
+            time.sleep(300)
+
+    if os.environ.get("ZOOMOLLO_NO_BACKGROUND") != "1":
+        threading.Thread(target=candidate_timer, daemon=True).start()
 
     def render(tab, tpl, **ctx):
         db = DB(db_path)
@@ -1104,6 +1232,120 @@ def create_app(db_path: str | None = None) -> Flask:
         threading.Thread(target=run_recheck, daemon=True).start()
         log.appendleft("✓ Re-check started")
         return redirect(url_for("changes"))
+
+    # --- candidates -----------------------------------------------------------------
+    @app.get("/candidates")
+    def candidates():
+        from . import candidates as cands, lens, loxo
+        db = DB(db_path)
+        q, source = request.args.get("q", "").strip(), request.args.get("source") or None
+        if q:
+            groups, results = cands.search(db, q, limit=60, source=source)
+            for r in results:
+                body = r["c"]["resume_text"] or "\n".join(x for x in [r["c"]["skills"], r["c"]["profile"]] if x)
+                r["snips"] = lens.snippets(body, groups, limit=2) if body else []
+        else:
+            groups = []
+            rows = db.conn.execute("SELECT * FROM candidates" + (" WHERE source = ?" if source else "") +
+                                   " ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 30", (source,) if source else ()).fetchall()
+            results = [{"c": dict(r), "match": None, "fit": "", "snips": []} for r in rows]
+        return render("candidates", CANDIDATES, q=q, src=source, groups=groups, results=results,
+                      describe=lens.describe(groups), counts=cands.candidate_counts(db), loxo_on=loxo.configured(),
+                      synced=db.get_setting("candidates_synced_at"), upload_msg=request.args.get("msg", ""))
+
+    @app.get("/candidate/<int:cid>")
+    def candidate(cid: int):
+        import html as _html
+        from . import candidates as cands, lens
+        from .resumes import years_experience
+        db = DB(db_path)
+        c = db.conn.execute("SELECT * FROM candidates WHERE id = ?", (cid,)).fetchone()
+        if not c:
+            abort(404)
+        q = request.args.get("q", "").strip()
+        groups = lens.parse(q)
+        text = c["resume_text"] or ""
+        m = lens.match(cands.document(c), groups) if groups else None
+        resume = (lens.highlight(text, groups) if groups else _html.escape(text)) if text else ""
+        skills = lens.highlight(c["skills"] or "", groups) if groups else _html.escape(c["skills"] or "")
+        if c["source"] == "loxo" and not text and c["resume_status"] in (None, "queued"):
+            cands.RESUME_QUEUE.appendleft(cid)
+        return render("candidates", CANDIDATE, c=c, q=q, groups=groups, m=m, resume=resume, skills=skills,
+                      years=years_experience(text or c["profile"] or ""), jobs=cands.matching_jobs(db, cid))
+
+    @app.post("/candidate/<int:cid>/fetch")
+    def candidate_fetch(cid: int):
+        from . import candidates as cands
+        try:
+            cands.fetch_resume(DB(db_path), cid)
+        except Exception as e:  # noqa: BLE001
+            return Response(f"Couldn't download the résumé: {e}", status=502)
+        return redirect(request.referrer or url_for("candidate", cid=cid))
+
+    @app.post("/candidates/upload")
+    def candidates_upload():
+        from . import candidates as cands
+        db = DB(db_path)
+        ok, failed = 0, []
+        for f in request.files.getlist("files"):
+            try:
+                cands.add_upload(db, f.filename or "resume", f.read())
+                ok += 1
+            except Exception as e:  # noqa: BLE001
+                failed.append(f"{f.filename}: {e}")
+        msg = f"Added {ok} résumé{'s' if ok != 1 else ''}." + (" Couldn't read: " + "; ".join(failed) if failed else "")
+        return redirect(url_for("candidates", msg=msg))
+
+    @app.post("/candidates/tools")
+    def candidates_tools():
+        action = request.form.get("action")
+        if action == "sync":
+            threading.Thread(target=run_candidate_sync, daemon=True).start()
+            log.appendleft("✓ Candidate sync started")
+        elif action == "resumes":
+            threading.Thread(target=run_resume_fill, args=(50,), daemon=True).start()
+        return redirect(url_for("candidates"))
+
+    @app.get("/pitch")
+    def pitch_page():
+        import os as _os
+        from . import candidates as cands, crm
+        from .offlimits import status as offlimits_status
+        db = DB(db_path)
+        cid, jid = int(request.args.get("candidate", 0)), int(request.args.get("job", 0))
+        c = db.conn.execute("SELECT * FROM candidates WHERE id = ?", (cid,)).fetchone()
+        job = db.conn.execute("SELECT * FROM jobs WHERE id = ?", (jid,)).fetchone()
+        if not c or not job:
+            abort(404)
+        co = db.company_row(job["company_id"])
+        return render("candidates", PITCH, c=c, job=job, p=cands.pitch(db, cid, jid), q=request.args.get("q", ""),
+                      company=co["name"] or co["key"], offl=offlimits_status(db, job["company_id"]),
+                      smtp=crm.smtp_configured() and bool(_os.environ.get("SMTP_HOST")))
+
+    @app.post("/pitch")
+    def pitch_send():
+        from . import crm
+        from .offlimits import status as offlimits_status
+        db = DB(db_path)
+        f = request.form
+        job = db.conn.execute("SELECT * FROM jobs WHERE id = ?", (int(f.get("job", 0)),)).fetchone()
+        if not job:
+            abort(404)
+        if offlimits_status(db, job["company_id"]).blocked and not f.get("override"):
+            return Response("Not sent: this company is off-limits.", status=403)
+        to, subject, body = f.get("to", "").strip(), f.get("subject", ""), f.get("body", "")
+        person = db.conn.execute("SELECT id FROM people WHERE lower(email) = ?", (to.lower(),)).fetchone() if to else None
+        pid = person["id"] if person else None
+        if f.get("action") == "smtp" and to:
+            try:
+                mid = crm.send_smtp(db, to, subject, body)
+            except Exception as e:  # noqa: BLE001
+                return Response(f"Couldn't send: {e}", status=502)
+            crm.record_email(db, to, subject, body, "smtp", pid, job["company_id"], message_id=mid)
+            return redirect(url_for("company", cid=job["company_id"]))
+        if to:
+            crm.record_email(db, to, subject, body, "mailto", pid, job["company_id"])
+        return redirect(crm.mailto_link(to, subject, body))
 
     @app.get("/companies")
     def companies():
