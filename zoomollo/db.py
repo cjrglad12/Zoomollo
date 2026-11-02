@@ -198,6 +198,17 @@ CREATE TABLE IF NOT EXISTS loxo_companies (
 );
 CREATE INDEX IF NOT EXISTS loxo_companies_domain ON loxo_companies(domain);
 CREATE INDEX IF NOT EXISTS loxo_companies_name ON loxo_companies(name_norm);
+-- What changed at a company between checks (feeds the "This week" view and the hiring score).
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,                        -- job_new | job_reposted | job_gone | person_new
+    detail TEXT,
+    job_id INTEGER REFERENCES jobs(id) ON DELETE SET NULL,
+    person_id INTEGER REFERENCES people(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS events_created ON events(created_at);
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -213,6 +224,11 @@ CREATE INDEX IF NOT EXISTS jobs_company ON jobs(company_id);
 """
 
 
+def now_precise() -> str:
+    """Microsecond timestamp: tells "seen this check" from "seen last check" even seconds apart."""
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -226,10 +242,13 @@ MIGRATIONS = {
     "companies": {"city": "TEXT", "industry": "TEXT", "address": "TEXT", "phone": "TEXT",
                   "source": "TEXT",
                   "offlimits_reason": "TEXT", "offlimits_until": "TEXT",  # set by you in Zoomollo
-                  "recruiters_seen": "INTEGER NOT NULL DEFAULT 0"},  # in-house recruiters spotted (not saved)
+                  "recruiters_seen": "INTEGER NOT NULL DEFAULT 0",  # in-house recruiters spotted (not saved)
+                  "last_checked": "TEXT"},          # last full look at its site / job boards
     "jobs": {"department": "TEXT", "description": "TEXT",
              "last_seen": "TEXT",                  # last time the role was still listed
-             "salary_max": "INTEGER"},             # yearly, parsed from the post when stated
+             "salary_max": "INTEGER",              # yearly, parsed from the post when stated
+             "closed_at": "TEXT",                  # stopped being listed (2 checks in a row)
+             "missed_checks": "INTEGER NOT NULL DEFAULT 0"},
     "templates": {"kind": "TEXT NOT NULL DEFAULT 'text'", "subject": "TEXT"},
     "loxo_companies": {"status_name": "TEXT", "blocked": "INTEGER NOT NULL DEFAULT 0", "blocked_until": "TEXT",
                        "owner": "TEXT"},
@@ -451,6 +470,8 @@ class DB:
                     self.conn.execute("DELETE FROM contacts WHERE value = ?", (row["email"],))
             return None
         if row is None:
+            level = seniority(title)
+            co = self.company_row(company_id)
             cur = self.conn.execute(
                 "INSERT INTO people (company_id, name, name_key, title, department, seniority, email, "
                 "email_status, phone, linkedin_url, source, source_url, first_seen) "
@@ -458,6 +479,9 @@ class DB:
                 (company_id, name, key, title, department(title), seniority(title), email,
                  fields.get("email_status") or ("found" if email else None), fields.get("phone"),
                  fields.get("linkedin_url"), fields.get("source"), fields.get("source_url"), now()))
+            if co and co["last_checked"] and level in ("c_level", "vp", "director", "manager") and title:
+                self.add_event(company_id, "person_new", f"New on their team: {name}, {title}",
+                               person_id=cur.lastrowid)
             return cur.lastrowid
         upd = {}
         if title and not row["title"]:
@@ -510,7 +534,9 @@ class DB:
                 description: str | None = None) -> None:
         from .hiringscore import parse_salary
         from .orgmap import department
-        t = now()
+        t = now_precise()
+        before = self.conn.execute("SELECT id, closed_at FROM jobs WHERE board = ? AND external_id = ?",
+                                   (board, external_id)).fetchone()
         self.conn.execute(
             "INSERT INTO jobs (company_id, board, external_id, title, location, url, posted_at, "
             "first_seen, last_seen, department, description, salary_max) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
@@ -519,10 +545,40 @@ class DB:
             "posted_at = COALESCE(jobs.posted_at, excluded.posted_at), "
             "description = COALESCE(excluded.description, jobs.description), "
             "salary_max = COALESCE(excluded.salary_max, jobs.salary_max), "
-            "last_seen = excluded.last_seen",
+            "last_seen = excluded.last_seen, closed_at = NULL, missed_checks = 0",
             (company_id, board, external_id, title, location, url, posted_at, t, t, department(title),
              (description or None) and description[:20000], parse_salary(description or "")),
         )
+        self._job_events(company_id, board, external_id, title, before)
+
+    def _job_events(self, company_id, board, external_id, title, before) -> None:
+        """New / reposted roles. Nothing is recorded on the first look at a company."""
+        co = self.company_row(company_id)
+        if not co or not co["last_checked"]:
+            return
+        job_id = self.conn.execute("SELECT id FROM jobs WHERE board = ? AND external_id = ?",
+                                   (board, external_id)).fetchone()[0]
+        if before and before["closed_at"]:
+            self.add_event(company_id, "job_reposted", f"{title} is listed again (was closed {before['closed_at'][:10]})",
+                           job_id=job_id)
+        elif not before:
+            norm = " ".join(title.lower().split())
+            closed = self.conn.execute(
+                "SELECT closed_at FROM jobs WHERE company_id = ? AND id != ? AND closed_at IS NOT NULL "
+                "AND closed_at >= date('now', '-120 days') AND lower(trim(title)) = ? ORDER BY closed_at DESC LIMIT 1",
+                (company_id, job_id, norm)).fetchone()
+            if closed:
+                self.add_event(company_id, "job_reposted", f"{title} reposted (closed {closed[0][:10]})", job_id=job_id)
+            else:
+                self.add_event(company_id, "job_new", f"New role: {title}", job_id=job_id)
+
+    def add_event(self, company_id: int, kind: str, detail: str, job_id: int | None = None,
+                  person_id: int | None = None) -> None:
+        self.conn.execute("INSERT INTO events (company_id, kind, detail, job_id, person_id, created_at) "
+                          "VALUES (?, ?, ?, ?, ?, ?)", (company_id, kind, detail, job_id, person_id, now()))
+        if self.conn.execute("SELECT 1 FROM pipeline WHERE company_id = ?", (company_id,)).fetchone():
+            self.conn.execute("INSERT INTO activities (company_id, person_id, kind, body, created_at) "
+                              "VALUES (?, ?, 'change', ?, ?)", (company_id, person_id, detail, now()))
 
     def is_bad_email(self, email: str) -> bool:
         return self.conn.execute("SELECT 1 FROM bad_emails WHERE value = ?", (email.lower(),)).fetchone() is not None
@@ -560,11 +616,12 @@ class DB:
         args.append(limit)
         return self.conn.execute(sql, args).fetchall()
 
-    def jobs(self, q: str = "", limit: int = 500, company_id: int | None = None) -> list[sqlite3.Row]:
+    def jobs(self, q: str = "", limit: int = 500, company_id: int | None = None,
+             include_closed: bool = False) -> list[sqlite3.Row]:
         sql = ("SELECT j.*, co.key AS company_key, co.name AS company_name FROM jobs j "
                "LEFT JOIN companies co ON co.id = j.company_id")
         args: list = []
-        sql += " WHERE 1=1"
+        sql += " WHERE 1=1" if include_closed else " WHERE j.closed_at IS NULL"
         if company_id is not None:
             sql += " AND j.company_id = ?"
             args.append(company_id)

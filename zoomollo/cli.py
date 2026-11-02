@@ -84,6 +84,12 @@ def main(argv: list[str] | None = None) -> int:
     tp = sub.add_parser("top", help="Companies ranked by hiring score")
     tp.add_argument("--limit", type=int, default=20)
     tp.add_argument("--niche", action="store_true", help="Only companies with roles in your niche")
+    rc = sub.add_parser("recheck", help="Re-check companies that are due and record what changed")
+    rc.add_argument("--limit", type=int, default=20)
+    rc.add_argument("--days", type=int, help="Re-check companies not checked for this many days (default 7)")
+    ch = sub.add_parser("changes", help="New, reposted and closed roles and new leaders")
+    ch.add_argument("--days", type=int, default=7)
+    ch.add_argument("--niche", action="store_true")
     sub.add_parser("pipeline", help="Show the client pipeline by stage")
     sub.add_parser("due", help="Follow-ups and next steps due today")
     sub.add_parser("send-due", help="Send due follow-up emails from your mailbox (SMTP settings)")
@@ -267,6 +273,19 @@ def main(argv: list[str] | None = None) -> int:
         for sc, co in hiringscore.ranked(db, niche_only=a.niche, limit=a.limit):
             why = sc.offlimits.reason if sc.offlimits.blocked else " · ".join(sc.top_reasons)
             print(f"{sc.total:>3}  {co['name'] or co['key']}  | {why}")
+
+    elif a.cmd == "recheck":
+        from . import recheck
+        print(json.dumps(recheck.run(db, a.limit, a.days, progress=print)))
+
+    elif a.cmd == "changes":
+        from . import recheck
+        for kind, label in recheck.KINDS.items():
+            rows = recheck.changes(db, a.days, a.niche)[kind]
+            if rows:
+                print(f"\n{label} ({len(rows)})")
+                for e in rows:
+                    print(f"   {e['created_at'][:10]}  {e['company_name'] or e['company_key']}: {e['detail']}")
 
     elif a.cmd == "pipeline":
         from . import crm

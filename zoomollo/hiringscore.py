@@ -31,6 +31,9 @@ SIGNALS = """
 +2  each other open role: growing (max 10)
 up to +10 permit / license activity in public records
 +5  past client in Loxo: warm
++10 a niche role was reposted (hard to fill)
++5  a niche role was posted this week
++5  a new leader joined (last 30 days): new managers often hire
 off-limits companies score 0
 """
 
@@ -190,7 +193,7 @@ def score_all(db: DB, desk: Desk | None = None, today: date | None = None) -> di
     companies = {r["id"]: r for r in db.conn.execute("SELECT * FROM companies")}
     jobs: dict[int, list] = {}
     for j in db.conn.execute("SELECT id, company_id, title, location, posted_at, first_seen, last_seen, salary_max "
-                             "FROM jobs"):
+                             "FROM jobs WHERE closed_at IS NULL"):
         seen = _days_since(j["last_seen"] or j["first_seen"], today)
         if seen is None or seen <= OPEN_DAYS:
             jobs.setdefault(j["company_id"], []).append(j)
@@ -199,6 +202,8 @@ def score_all(db: DB, desk: Desk | None = None, today: date | None = None) -> di
                              "WHERE hiring_for IS NOT NULL"):
         people.setdefault(p["company_id"], []).append(p)
     stages = {r["company_id"]: r["stage"] for r in db.conn.execute("SELECT company_id, stage FROM pipeline")}
+    from .recheck import recent_signals
+    changes = recent_signals(db, today)
     records = {}
     for cid, co in companies.items():
         n = sum(int(x) for x in re.findall(r"\((\d+) records\)", co["source"] or ""))
@@ -244,6 +249,17 @@ def score_all(db: DB, desk: Desk | None = None, today: date | None = None) -> di
                 reasons.append((5, "hiring manager email guessed"))
             else:
                 reasons.append((0, "no hiring manager contact yet"))
+        ch = changes.get(cid)
+        if ch and fit:
+            fit_set = set(fit)
+            reposted = [t for t in ch["reposted"] if t in fit_set]
+            new = [t for t in ch["new"] if t in fit_set and t not in reposted]
+            if reposted:
+                reasons.append((10, f"reposted: {', '.join(dict.fromkeys(reposted))} (hard to fill)"))
+            if new:
+                reasons.append((5, "new this week: " + ", ".join(dict.fromkeys(new))))
+        if ch and ch["leaders"]:
+            reasons.append((5, "new leader on their team (new managers often hire)"))
         if records.get(cid):
             reasons.append((min(2 * records[cid], 10), f"active in public records ({records[cid]})"))
         st = offlimits_status(db, cid)
