@@ -2,6 +2,13 @@
 # Paste values after the = signs, save this file, then restart Zoomollo.
 # Anything left blank is simply not used.
 
+# --- Your business details: used in email footers (US CAN-SPAM needs a mailing address)
+# and in message templates as {my_name} / {my_company}. You can override them in the app
+# under Messages > Your details.
+MY_NAME=
+MY_COMPANY=Norton Digital Consulting
+MY_ADDRESS=100 Chesterfield Business Parkway, Suite 209, Chesterfield, MO 63005
+
 # --- Loxo: off-limits checks (active clients, recent placements) and pushing contacts
 LOXO_AGENCY_SLUG=
 LOXO_API_KEY=
