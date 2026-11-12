@@ -101,13 +101,14 @@ def test_bad_number_is_removed_and_stays_gone(tmp_path):
     from zoomollo.db import DB
     db = DB(str(tmp_path / "b.db"))
     cid = db.company("ziosk.com", domain="ziosk.com", name="Ziosk")
-    db.add_contact(cid, "phone", "+18775854822", "company")
+    db.add_contact(cid, "phone", "+18775854822", "company")             # toll-free: never dialed
     db.add_contact(cid, "phone", "+12145804800", "company")
+    db.add_contact(cid, "phone", "+19725550188", "company")
     db.commit()
-    assert today._main_line(db, cid, None) == "+12145804800"            # local line before the toll-free one
+    assert today._main_line(db, cid, None) == "+12145804800"
     undo = today.log_outcome(db, cid, None, "bad_number", "just tech support")
     assert undo["bad_number"]["number"] == "+12145804800"
-    assert today._main_line(db, cid, None) == "+18775854822"            # the next number takes over
+    assert today._main_line(db, cid, None) == "+19725550188"            # the next number takes over
     assert db.add_contact(cid, "phone", "+12145804800", "company") is False   # a re-read can't bring it back
     assert not db.conn.execute("SELECT 1 FROM pipeline WHERE company_id = ?", (cid,)).fetchone()  # not a touch
     today.undo_outcome(db, undo)

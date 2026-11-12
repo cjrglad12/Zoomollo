@@ -14,7 +14,7 @@ import requests
 
 from .crawler import Crawler, normalize_domain
 from .db import DB, now, now_precise
-from .exclusions import is_staffing_domain, staffing_signal
+from .exclusions import is_staffing_domain, is_support_title, staffing_signal
 from .extract import (_GENERIC_NAME, _domain_match, best_company_name, is_role_email, looks_like_name,
                       normalize_phone, plausible_title, social_kind)
 from .jobboards import fetch_jobs
@@ -144,7 +144,16 @@ def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
             if db.add_contact(company_id, "email", email, _kind(email), name=name,
                               title=p.title if p else None, source_url=page.url):
                 found["emails"] += 1
+        support = getattr(page, "support_phones", set())
+        person_phones = {p.phone for p in page.people if p.phone}
+        for number in support - person_phones:
+            # Customer service / tech support: never a way to a hiring manager. Remembered so
+            # it doesn't come back from another page.
+            if not db.is_suppressed(number):
+                db.suppress(number, "customer service line")
         for p in page.people:
+            if p.phone and is_support_title(p.title):
+                p.phone = None
             if p.phone and p.name:
                 db.add_contact(company_id, "phone", p.phone, "person",
                                name=p.name if looks_like_name(p.name, cname) else None,
@@ -167,7 +176,7 @@ def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
                                  linkedin_url=clean_linkedin_url(p.linkedin or ""), source="website",
                                  source_url=page.url):
                     found["people"] += 1
-        for phone in ([] if article_page(page.url) or job_posting_page(page.url) else page.phones):
+        for phone in ([] if article_page(page.url) or job_posting_page(page.url) else page.phones - support):
             if db.add_contact(company_id, "phone", phone, "company", source_url=page.url):
                 found["phones"] += 1
         for url in page.socials:

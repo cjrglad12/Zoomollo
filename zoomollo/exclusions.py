@@ -87,6 +87,58 @@ def is_recruiting_title(title: str | None) -> bool:
     return bool(title) and bool(_RECRUITING_TITLE.search(title))
 
 
+def is_unwanted_title(title: str | None) -> bool:
+    """Recruiting/staffing people and customer service or tech support reps."""
+    return is_recruiting_title(title) or is_support_title(title)
+
+
+# Customer service / tech support: numbers and people that never reach a hiring manager.
+SUPPORT_LABEL = re.compile(
+    r"\b(?:customer|client|consumer|member|patient|guest)s?\s+(?:service|services|support|care|success|experience)\b"
+    r"|\btech(?:nical)?\s+support\b|\bit\s+support\b|\bhelp\s?desk\b|\bservice\s+desk\b|\bsupport\s+desk\b"
+    r"|\bsupport\s+(?:line|hotline|center|centre|team|portal|number|phone)\b|\b24\s*/\s*7\s+support\b|\b(?:for|call|contact|get)\s+support\b"
+    r"|\bsupport\s*:|\bcall\s+cent(?:er|re)\b|\bcontact\s+cent(?:er|re)\b"
+    r"|\bbilling\s+(?:department|dept|questions|inquiries|support|line|team|help)\b"
+    r"|\bclaims\s+(?:department|dept|line|center|hotline|reporting)\b|\b(?:file|report)\s+a\s+claim\b"
+    r"|\border\s+status\b|\breturns\s+(?:department|line|center)\b|\bwarranty\s+(?:service|claims|department|line|support)\b"
+    r"|\bservice\s+requests?\b|\bschedule\s+(?:a\s+)?service\b"
+    r"|\breport\s+an?\s+(?:outage|issue|problem)\b|\b(?:24[- ]hour|emergency|after[- ]hours)\s+(?:service|line|support|dispatch)\b"
+    r"|\bdispatch\b|\bcustomer\s+line\b", re.I)
+# Labels that mean the number after them is an office line, not support.
+OFFICE_LABEL = re.compile(r"\b(?:main|office|corporate|headquarters|hq|reception|front\s+desk|switchboard|"
+                          r"general|administration|admin|local)\b", re.I)
+SUPPORT_PATH = re.compile(r"/(?:support|customer-?service|customer-?care|customer-?support|help|help-?desk|"
+                          r"help-?center|tech-?support|technical-?support|contact-?support|billing|claims|"
+                          r"service-?request|faqs?)(?:/|$|\.|-)", re.I)
+SUPPORT_HOST = re.compile(r"^(?:support|help|helpdesk|service|care|customercare|billing)\.", re.I)
+
+_SUPPORT_AREA = re.compile(
+    r"\b(?:customer|client|consumer|member|patient|guest)s?\s+(?:service|services|support|care|success|experience)\b"
+    r"|\btech(?:nical)?\s+support\b|\bit\s+support\b|\bdesktop\s+support\b|\bproduct\s+support\b"
+    r"|\bapplication\s+support\b|\bhelp\s?desk\b|\bservice\s+desk\b|\bsupport\s+desk\b|\bcall\s+cent(?:er|re)\b"
+    r"|\bcontact\s+cent(?:er|re)\b|\bcsr\b|\bdispatcher\b|\bbilling\s+(?:rep|representative|specialist|clerk)\b", re.I)
+_LEADS_A_TEAM = re.compile(r"\b(?:manager|director|vp|vice\s+president|head|chief|president|owner|partner|"
+                           r"supervisor|controller|officer)\b", re.I)
+
+
+def is_support_page(url: str | None) -> bool:
+    """A help, support or billing page: its phone numbers go to customer service."""
+    from urllib.parse import urlparse
+    u = urlparse(url or "")
+    return bool(SUPPORT_PATH.search(u.path or "") or SUPPORT_HOST.match(u.netloc.lower().removeprefix("www.")))
+
+
+def is_support_title(title: str | None) -> bool:
+    """CSRs, tech support reps and the like: they don't hire and can't put you through.
+    Whoever runs that team (a Customer Service Manager, say) is kept, except Customer
+    Success Managers, who look after customers rather than a team."""
+    if not title or not _SUPPORT_AREA.search(title):
+        return False
+    if re.search(r"\b(?:customer|client)\s+success\s+manager\b", title, re.I):
+        return True
+    return not _LEADS_A_TEAM.search(title)
+
+
 # Words that make the end of a title an organisation's name, e.g.
 # "Chief Growth Officer, Ideal Credit Union" (a customer quoted on the site).
 _ORG_WORDS = re.compile(

@@ -326,7 +326,7 @@ class DB:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.execute("PRAGMA synchronous=NORMAL")  # safe with WAL, and much less waiting on the disk
-        if self.path in _READY and self.conn.execute("PRAGMA user_version").fetchone()[0] >= 6:  # tables and repairs were already checked by this program: opening is instant
+        if self.path in _READY and self.conn.execute("PRAGMA user_version").fetchone()[0] >= 7:  # tables and repairs were already checked by this program: opening is instant
             return
         self._setup()
         if self.path != ":memory:":
@@ -388,6 +388,12 @@ class DB:
                     self.fix_chief_levels()
                     self.conn.execute("PRAGMA user_version = 6")
                     self.conn.commit()
+        if self.conn.execute("PRAGMA user_version").fetchone()[0] < 7:
+            with _SETUP_LOCK:
+                if self.conn.execute("PRAGMA user_version").fetchone()[0] < 7:
+                    self.purge_support()
+                    self.conn.execute("PRAGMA user_version = 7")
+                    self.conn.commit()
 
     # --- exclusions (see exclusions.py) ----------------------------------------
     def purge_excluded(self) -> dict:
@@ -412,6 +418,29 @@ class DB:
             if why:
                 self.block_company(r["id"], why)
                 out["companies"] += 1
+        self.conn.commit()
+        return out
+
+    def purge_support(self) -> dict:
+        """Remove customer service / tech support numbers and reps already saved: numbers
+        read from help, support or billing pages, and people with CSR or support-rep titles."""
+        from .exclusions import is_support_page, is_support_title
+        out = {"numbers": 0, "people": 0}
+        for r in self.conn.execute("SELECT DISTINCT value, source_url FROM contacts WHERE type = 'phone' "
+                                   "AND kind != 'person'").fetchall():
+            if is_support_page(r["source_url"]) and not self.is_suppressed(r["value"]):
+                self.suppress(r["value"], "customer service line")
+                out["numbers"] += 1
+        for r in self.conn.execute("SELECT id, title, email, phone FROM people").fetchall():
+            if is_support_title(r["title"]):
+                self.conn.execute("DELETE FROM people WHERE id = ?", (r["id"],))
+                for v in (r["email"], r["phone"]):
+                    if v:
+                        self.conn.execute("DELETE FROM contacts WHERE value = ? AND kind = 'person'", (v,))
+                out["people"] += 1
+        for r in self.conn.execute("SELECT id, title FROM contacts WHERE title IS NOT NULL").fetchall():
+            if is_support_title(r["title"]):
+                self.conn.execute("DELETE FROM contacts WHERE id = ?", (r["id"],))
         self.conn.commit()
         return out
 
@@ -531,9 +560,9 @@ class DB:
                     name: str | None = None, title: str | None = None,
                     source_url: str | None = None) -> bool:
         """Insert or refresh a contact. Returns False if suppressed."""
-        from .exclusions import is_excluded_email, is_recruiting_title
+        from .exclusions import is_excluded_email, is_unwanted_title
         value = value.lower() if type_ == "email" else value
-        if self.is_suppressed(value) or is_recruiting_title(title):
+        if self.is_suppressed(value) or is_unwanted_title(title):
             return False
         if type_ == "email" and (self.is_bad_email(value) or is_excluded_email(value)):
             return False
@@ -553,9 +582,12 @@ class DB:
 
     def add_person(self, company_id: int, name: str, title: str | None = None, **fields) -> int | None:
         """Insert or enrich a person. Existing values win except blanks get filled."""
-        from .exclusions import is_excluded_email, is_recruiting_title, works_elsewhere
+        from .exclusions import is_excluded_email, is_recruiting_title, is_support_title, works_elsewhere
         from .orgmap import department, seniority
         name = " ".join(name.split())
+        if is_support_title(title):  # a CSR or tech support rep: can't help with a hire
+            self.conn.execute("DELETE FROM people WHERE company_id = ? AND name_key = ?", (company_id, name.lower()))
+            return None
         if (title and fields.get("source") == "website"
                 and works_elsewhere(title, *self._co_name_domain(company_id))):
             return None  # a customer / partner quoted on their site, not an employee

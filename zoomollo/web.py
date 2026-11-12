@@ -42,6 +42,12 @@ SCORE_MACRO = """{% macro scorechip(sc) %}<span class="score s{{ 3 if sc.total >
 SUMMARY_MACRO = """{% macro cosummary(s) %}{% set bits = [s.summary, ('about ' ~ '{:,}'.format(s.headcount) ~ ' people') if s.headcount and s.headcount_source != 'apollo-range' else ('101–500 people' if s.headcount_source == 'apollo-range' else ''), s.city or ''] | select | list %}{% if bits %}<div class="zm-sum">{{ bits | join(' · ') }}</div>{% endif %}{% endmacro %}"""
 PHONE_MACRO = SUMMARY_MACRO + """{% macro phonecell(own, main=None) %}{% if own %}<span class="v">{{ own|phone }}</span>{% elif main %}<span class="v">{{ main|phone }}</span><br><span class="muted" style="font-size:12px">main line</span>{% else %}<span class="muted">not found</span>{% endif %}{% endmacro %}"""
 
+ROLES_MACRO = """{% macro roleslist(roles, show=5) %}{% if roles %}{% set total = roles|sum(attribute='n') %}{% set fit = roles|selectattr('fit')|sum(attribute='n') %}
+<div class="zm-roles" style="margin-top:8px"><span class="muted">Open roles ({{ total }}{% if fit and fit < total %}, {{ fit }} on your desk{% endif %}):</span>
+{% for j in roles[:80] %}{% if loop.index == show + 1 %}<details><summary class="muted" style="cursor:pointer;font-size:13px;padding:4px 0">{{ roles|length - show }} more role{{ 's' if roles|length - show != 1 }}</summary>{% endif %}
+<div style="margin-left:8px;font-size:14px">• {% if j.url %}<a href="{{ j.url }}" target="_blank" rel="noopener">{% endif %}{% if j.fit %}<b>{{ j.title }}</b>{% else %}{{ j.title }}{% endif %}{% if j.url %}</a>{% endif %}{% if j.n > 1 %} ×{{ j.n }}{% endif %}
+{%- if j.location %} <span class="muted">· {{ j.location }}</span>{% endif %}{% if j.age %} <span class="muted">· {{ j.age }}</span>{% endif %}</div>
+{% if loop.last and loop.length > show %}</details>{% endif %}{% endfor %}</div>{% endif %}{% endmacro %}"""
 OL_MACRO = """{% macro olbadge(st) %}{% if st and st.level %}<span class="chip ol-{{ st.level }}" title="{{ st.reason }}">{{ {'blocked': '⛔ Off-limits', 'warn': 'Past client', 'info': 'In Loxo'}[st.level] }}</span>{% endif %}{% endmacro %}"""
 
 PAGE = """<!doctype html>
@@ -576,7 +582,7 @@ If it didn't open, <a href="{{ mailto }}">open it again</a>.</div>
 <a class="btn" href="{{ url_for('today_page') }}">No, not yet</a></form></div>
 <script>window.location.href = {{ mailto|tojson }};</script>"""
 
-TODAY = PHONE_MACRO + """<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><h2>Today</h2>
+TODAY = PHONE_MACRO + ROLES_MACRO + """<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><h2>Today</h2>
 <a class="btn" href="{{ url_for('blitz_page') }}" style="margin-left:auto" title="Work a call list one card at a time, with keyboard shortcuts">▶ Start call blitz</a></div>
 <div class="sub"><span id="zm-left">{{ rows|length }} account{{ 's' if rows|length != 1 }} to call</span> · {{ due|length }} follow-up{{ 's' if due|length != 1 }} due · {{ done|length }} logged today
 {% if not desk_set %} · <a href="{{ url_for('companies') }}">set your desk</a> so this list knows which roles you place{% endif %}</div>
@@ -616,6 +622,7 @@ TODAY = PHONE_MACRO + """<div style="display:flex;gap:12px;align-items:center;fl
 {% set num = (r.person.phone if r.person and r.person.phone else r.main_line) %}{% if num %}<a class="btn callbtn" href="tel:{{ num }}">📞 Call {{ num|phone }}</a>
 <div class="muted zm-linekind">{{ 'direct line' if r.person and r.person.phone else 'main line' }}{% if num|linenote %} · <b>{{ num|linenote }}</b>{% endif %}</div>{% endif %}
 <div style="margin-top:8px"><span class="muted">Why now:</span> {{ r.why_now|join(' · ') }}</div>
+{{ roleslist(r.roles) }}
 <div style="margin-top:8px"><span class="muted">Say:</span>
 <div style="display:flex;gap:8px;align-items:flex-start;margin-top:4px"><div class="preview" style="flex:1;min-width:0">{{ r.opener }}</div>
 <button type="button" class="ghost" style="background:transparent;color:var(--accent);border:1px solid var(--line);padding:4px 10px" data-text="{{ r.opener }}" onclick="navigator.clipboard.writeText(this.dataset.text);this.textContent='Copied'">Copy</button></div></div>
@@ -739,7 +746,7 @@ BLITZ_BUILD = """<h2>Call blitz</h2>
 <script>function zmSrc(){var c=document.querySelector('input[name=source]:checked').value==='custom';
 document.getElementById('zm-custom').style.opacity=c?1:.45;document.querySelectorAll('#zm-custom select,#zm-custom input').forEach(function(e){e.disabled=!c});}zmSrc();</script>"""
 
-BLITZ_RUN = PHONE_MACRO + """<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+BLITZ_RUN = PHONE_MACRO + ROLES_MACRO + """<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
 <h2 style="margin:0">Blitz: {{ s.name }}</h2>
 <span class="chip">card {{ s.i + 1 }} of {{ s['items']|length }}</span>
 <span style="font-size:14px"><b>{{ t.dials }}</b> dial{{ 's' if t.dials != 1 }} · <b>{{ t.conversations }}</b> conversation{{ 's' if t.conversations != 1 }} · <b>{{ t.voicemail }}</b> voicemail{{ 's' if t.voicemail != 1 }} · <b>{{ t.meeting }}</b> meeting{{ 's' if t.meeting != 1 }}{% if t.meeting %} 🎉{% endif %} · <span id="zm-clock" class="muted" data-start="{{ s.started }}"></span></span>
@@ -762,6 +769,7 @@ BLITZ_RUN = PHONE_MACRO + """<div style="display:flex;gap:10px;align-items:cente
 <span class="muted" style="font-size:12px">{{ left }} free Apollo credit{{ '' if left == 1 else 's' }} left this month</span>{% elif c.lead.enriched_at and not c.lead.last_name %}<span class="muted" style="font-size:12px">· Apollo had no more on them</span>{% endif %}</div></div>
 {% else %}<div style="margin-top:6px;font-size:16px">Front desk · ask for the <b>{{ c.ask_for }}</b> · <a href="{{ li_search(c.ask_for, c.company) }}" target="_blank" rel="noopener" style="font-size:13px">find them on LinkedIn</a></div>{% endif %}
 {% if c.why_now %}<div style="margin-top:8px;font-size:14px"><span class="muted">Why now:</span> {{ c.why_now|join(' · ') }}</div>{% endif %}
+{{ roleslist(c.roles) }}
 {% if c.last %}<div class="muted" style="margin-top:4px;font-size:13px">Last touch: {{ c.last.body }} · {{ c.last.created_at[:10] }}{% if c.next_step %} · next step: {{ c.next_step }}{% endif %}</div>{% endif %}</div>
 <div style="text-align:center;min-width:240px">
 {% if c.phone %}<div class="zm-num" style="font-size:30px;font-weight:700;letter-spacing:.02em">{{ c.phone|phone }}</div>
