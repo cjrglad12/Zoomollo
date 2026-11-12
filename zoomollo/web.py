@@ -478,7 +478,11 @@ Look it up, paste its website here, and Zoomollo reads it in the background.
 {% if not desk_set %}<div class="why" style="margin-top:6px">Tip: set <a href="{{ url_for('companies') }}">My desk</a> so only roles you place count.</div>{% endif %}</div></div>
 
 {% if leads %}<div class="section"><b>Leaders found in Apollo</b> <span class="muted">· {{ leads|length }} · first names and titles; last names hidden until looked up</span></div>
-<div class="card" style="margin-bottom:12px">{% for l in leads %}<div style="padding:3px 0"><b>{{ l.first_name }}</b> {{ l.last_masked or '' }} <span class="muted">· {{ l.title or '' }}</span></div>{% endfor %}</div>{% endif %}
+<div class="card" style="margin-bottom:12px">{% for l in leads %}<div style="padding:3px 0"><b>{{ l.first_name }} {{ l.last_name or '' }}</b>{% if not l.last_name %} {{ l.last_masked or '' }}{% endif %} <span class="muted">· {{ l.title or '' }}</span>
+{% if l.email %} · <a href="mailto:{{ l.email }}">{{ l.email }}</a> <span class="chip">{{ 'verified' if l.email_status == 'verified' else (l.email_status or 'unverified') }}</span>{% endif %}
+{% set left = apollo_left() %}{% if left is not none and not l.enriched_at %}<form class="fb" method="post" action="{{ url_for('lead_enrich', lid=l.id) }}" style="display:inline">
+<button class="ghost" {{ 'disabled' if not left }} title="Uses one free Apollo credit; personal emails and phones are never requested">Get full name &amp; email</button></form>
+<span class="muted" style="font-size:12px">{{ left }} free Apollo credit{{ '' if left == 1 else 's' }} left this month</span>{% elif l.enriched_at and not l.last_name %}<span class="muted" style="font-size:12px">· Apollo had no more on them</span>{% endif %}</div>{% endfor %}</div>{% endif %}
 <div class="section"><b>Org map</b> <span class="muted">· {{ people|length }} people</span></div>
 <details class="zm-fold" open><summary>Show all {{ people|length }} people</summary>
 {% if people %}<div class="org">{% for d, ps in org %}<div class="card dept"><h4>{{ depts[d] }}</h4>
@@ -596,7 +600,10 @@ TODAY = PHONE_MACRO + """<div style="display:flex;gap:12px;align-items:center;fl
 {% if r.due %} <span class="chip hm">call-back due</span>{% endif %}{% if r.stage %} <span class="chip">{{ r.stage }}</span>{% endif %}</div>
 {{ cosummary(r.about) }}
 {% if r.person %}<div style="margin-top:4px"><b>{{ r.person.name }}</b> · {{ r.person.title or '' }} <span class="muted">({{ r.why_person }})</span></div>
-{% elif r.lead %}<div style="margin-top:4px">Ask for <b>{{ r.lead_label }}</b> <span class="muted">(main line; last name hidden until looked up)</span></div>
+{% elif r.lead %}<div style="margin-top:4px">Ask for <b>{{ r.lead_label }}</b> <span class="muted">(main line; last name hidden until looked up)</span>
+<div style="margin-top:4px">{% set left = apollo_left() %}{% if left is not none and not r.lead.enriched_at %}<form class="fb" method="post" action="{{ url_for('lead_enrich', lid=r.lead.id) }}" style="display:inline">
+<button class="ghost" {{ 'disabled' if not left }} title="Uses one free Apollo credit; personal emails and phones are never requested">Get full name &amp; email</button></form>
+<span class="muted" style="font-size:12px">{{ left }} free Apollo credit{{ '' if left == 1 else 's' }} left this month</span>{% elif r.lead.enriched_at and not r.lead.last_name %}<span class="muted" style="font-size:12px">· Apollo had no more on them</span>{% endif %}</div></div>
 {% else %}<div style="margin-top:4px" class="muted">No named contact yet: call the main line and ask for the {{ r.ask_for }}.</div>{% endif %}
 <div style="margin-top:2px;font-size:13px">{% if r.person %}<span class="muted">If they are the wrong person, ask for the</span> {{ r.ask_for }} · {% endif %}<a href="{{ li_search(r.ask_for, r.company) }}" target="_blank" rel="noopener">{{ 'find on LinkedIn' if r.person else 'Find the ' ~ r.ask_for ~ ' on LinkedIn' }}</a></div>
 <div class="v zm-links" style="margin-top:4px">
@@ -750,7 +757,9 @@ BLITZ_RUN = PHONE_MACRO + """<div style="display:flex;gap:10px;align-items:cente
 {% if c.person %}<div style="margin-top:6px;font-size:17px"><b>{{ c.person.name }}</b> · {{ c.person.title or '' }} <span class="muted" style="font-size:13px">({{ c.why_person }})</span>
 · <a href="{{ c.person.linkedin_url or li_search(c.person.name, c.company) }}" target="_blank" rel="noopener" style="font-size:13px">LinkedIn</a></div>
 {% elif c.lead %}<div style="margin-top:6px;font-size:16px">Front desk · ask for <b>{{ c.lead_label }}</b>
-<span class="muted" style="font-size:13px">(last name hidden)</span></div>
+<span class="muted" style="font-size:13px">(last name hidden)</span><div style="margin-top:4px;font-size:14px">{% set left = apollo_left() %}{% if left is not none and not c.lead.enriched_at %}<form class="fb" method="post" action="{{ url_for('lead_enrich', lid=c.lead.id) }}" style="display:inline">
+<button class="ghost" {{ 'disabled' if not left }} title="Uses one free Apollo credit; personal emails and phones are never requested">Get full name &amp; email</button></form>
+<span class="muted" style="font-size:12px">{{ left }} free Apollo credit{{ '' if left == 1 else 's' }} left this month</span>{% elif c.lead.enriched_at and not c.lead.last_name %}<span class="muted" style="font-size:12px">· Apollo had no more on them</span>{% endif %}</div></div>
 {% else %}<div style="margin-top:6px;font-size:16px">Front desk · ask for the <b>{{ c.ask_for }}</b> · <a href="{{ li_search(c.ask_for, c.company) }}" target="_blank" rel="noopener" style="font-size:13px">find them on LinkedIn</a></div>{% endif %}
 {% if c.why_now %}<div style="margin-top:8px;font-size:14px"><span class="muted">Why now:</span> {{ c.why_now|join(' · ') }}</div>{% endif %}
 {% if c.last %}<div class="muted" style="margin-top:4px;font-size:13px">Last touch: {{ c.last.body }} · {{ c.last.created_at[:10] }}{% if c.next_step %} · next step: {{ c.next_step }}{% endif %}</div>{% endif %}</div>
@@ -1516,6 +1525,7 @@ def create_app(db_path: str | None = None) -> Flask:
         try:  # accounts on your desk with no named leader yet: look them up in Apollo (free search)
             from . import leads as _leads
             _leads.backfill(DB(db_path), limit=60, progress=log.appendleft)
+            _leads.auto_enrich(DB(db_path), progress=log.appendleft)
         except Exception as e:  # noqa: BLE001
             log.appendleft(f"Apollo leader lookup skipped: {e}")
 
@@ -1676,6 +1686,23 @@ def create_app(db_path: str | None = None) -> Flask:
     if os.environ.get("ZOOMOLLO_NO_BACKGROUND") != "1":
         threading.Thread(target=candidate_timer, daemon=True).start()
 
+    def apollo_timer():
+        """A few Apollo lookups a day for the best accounts, inside the free monthly credits."""
+        import time
+        from . import leads as _leads
+        time.sleep(1800)
+        while True:
+            try:
+                if _leads.configured():
+                    _leads.backfill(DB(db_path), limit=60, progress=log.appendleft)
+                    _leads.auto_enrich(DB(db_path), progress=log.appendleft)
+            except Exception as e:  # noqa: BLE001
+                log.appendleft(f"Apollo lookup skipped: {e}")
+            time.sleep(6 * 3600)
+
+    if os.environ.get("ZOOMOLLO_NO_BACKGROUND") != "1":
+        threading.Thread(target=apollo_timer, daemon=True).start()
+
     def local_jobs(db) -> tuple[int, int]:
         """(open roles in your area, all open roles)."""
         from .hiringscore import _location_ok, load_desk
@@ -1760,7 +1787,12 @@ def create_app(db_path: str | None = None) -> Flask:
             from .candidates import candidates_for_job
             return candidates_for_job(db, j["id"], n) if desk_fit(j) else []
 
+        from . import leads as _ap
+
+        def apollo_left():
+            return _ap.credits_left(db) if _ap.configured() else None
         body = render_template_string(tpl, depts=DEPT_LABELS, levels=LEVEL_LABELS, li_search=linkedin_search_url,
+                                      apollo_left=apollo_left,
                                       dict=dict, ol=ol, cophone=cophone, pitch_for=pitch_for, desk_fit=desk_fit, **ctx)
         from .hiringscore import load_desk
         setup = []  # what's still missing before Zoomollo works properly for your desk
@@ -2734,6 +2766,13 @@ def create_app(db_path: str | None = None) -> Flask:
         save_desk(DB(db_path), f.get("titles", ""), f.get("exclude", ""), f.get("locations", ""), f.get("min_salary"),
                   f.get("max_open_roles", "keep"), f.get("min_headcount", "keep"), f.get("max_headcount", "keep"))
         return redirect(request.referrer or url_for("companies"))
+
+    @app.post("/lead/<int:lid>/enrich")
+    def lead_enrich(lid: int):
+        from . import leads as _leads
+        r = _leads.enrich(DB(db_path), lid)
+        log.appendleft(("✓ Apollo: " if r["ok"] else "Apollo: ") + r["msg"])
+        return redirect(request.referrer or url_for("today_page"))
 
     @app.post("/company/<int:cid>/leads")
     def company_leads(cid: int):

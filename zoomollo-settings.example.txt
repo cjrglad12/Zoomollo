@@ -15,6 +15,14 @@ LOXO_API_KEY=
 # Months after a placement that the company stays off-limits (default 12)
 OFFLIMITS_MONTHS=
 
+# --- Apollo (optional): named leaders at your accounts, plus full name + work email lookups.
+# Searching for leaders is free. Each full-name/email lookup uses one Apollo credit, so Zoomollo
+# spends at most APOLLO_FREE_CREDITS a month (default 50), spread over the month, and stops as soon
+# as Apollo says the free credits are gone. Personal emails and phone numbers are never requested.
+# Set APOLLO_FREE_CREDITS to your plan's free monthly allowance, or 0 to turn lookups off.
+APOLLO_API_KEY=
+APOLLO_FREE_CREDITS=
+
 # --- Gmail / Google Workspace (easiest: use "Connect Gmail" on the Pipeline tab, which fills these in)
 # App password: https://myaccount.google.com/apppasswords (needs 2-Step Verification). Not your normal password.
 GMAIL_ADDRESS=
