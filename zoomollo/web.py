@@ -133,7 +133,9 @@ a.skip:focus{left:8px}
 html.mobile header{flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:10px;padding:12px}
 html.mobile .brand{display:flex;justify-content:space-between;align-items:center}
 html.mobile nav{flex-wrap:nowrap;overflow-x:auto;gap:4px;margin:0 -12px;padding:0 12px;scrollbar-width:none}
-html.mobile nav a{padding:8px 12px;border-radius:20px;background:var(--seg);white-space:nowrap}
+html.mobile nav a{padding:6px 10px;border-radius:20px;background:var(--seg);white-space:nowrap;font-size:15px;scroll-snap-align:start}
+html.mobile nav{scroll-snap-type:x proximity;-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent)}
+html.mobile nav a .n{font-size:11px;padding:0 5px}
 html.mobile nav a.on{background:var(--accent);color:#fff}
 html.mobile .toggles{margin-left:0;display:grid;grid-template-columns:minmax(0,1fr);gap:6px}
 html.mobile .seg{display:flex;min-width:0}html.mobile .seg button{flex:1 1 0;min-width:0;padding:8px 2px;overflow:hidden;text-overflow:ellipsis}
@@ -281,6 +283,14 @@ document.querySelectorAll("table").forEach(function (t) {
   });
 });
 window.zmApply();
+// Phone: keep the tab you're on in view in the sideways-scrolling tab row.
+(function () {
+  var on = document.querySelector("nav a.on"), nav = document.querySelector("nav");
+  if (on && nav && document.documentElement.classList.contains("mobile")) {
+    var r = on.getBoundingClientRect(), n = nav.getBoundingClientRect();
+    if (r.left < n.left || r.right > n.right - 24) nav.scrollLeft += r.left - n.left - 8;
+  }
+})();
 // Screen readers: every field gets a name (from its placeholder if it has no label),
 // and decorative icons are skipped.
 document.querySelectorAll("input:not([type=hidden]), textarea, select").forEach(function (el) {

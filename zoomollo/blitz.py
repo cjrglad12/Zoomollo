@@ -227,7 +227,7 @@ def _number(person, main_line):
 # ---- one flash card -----------------------------------------------------------------------
 
 def dial_digits(phone: str) -> str:
-    """'+1 (972) 242-5700 x12' -> '+19722425700' (Google Voice wants the plain number)."""
+    """'+1 (512) 555-0100 x12' -> '+15125550100' (Google Voice wants the plain number)."""
     main = re.split(r"(?i)\s*(?:x|ext\.?|extension)\s*\d+\s*$", phone or "")[0]
     digits = re.sub(r"\D", "", main)
     if len(digits) == 10:
@@ -249,7 +249,7 @@ def _first(name: str | None) -> str:
 
 
 def say_number(phone: str) -> str:
-    """A number the way you read it out: 9727549014 -> 972-754-9014."""
+    """A number the way you read it out: 5125550123 -> 512-555-0123."""
     digits = re.sub(r"\D", "", phone or "")
     if len(digits) == 11 and digits.startswith("1"):
         digits = digits[1:]

@@ -1,4 +1,3 @@
-from zoomollo import hiringscore
 from zoomollo.db import DB
 from zoomollo.extract import extract_page, find_headcount
 from zoomollo.hiringscore import Desk, load_desk, save_desk, score_all, wrong_size

@@ -2,7 +2,7 @@
 
 Apollo's search is free (no credits) and returns each person's first name, a masked last
 name ("Ro***s") and title. That is enough to ask the front desk for someone by name:
-"Could I speak with Sally, your VP and Controller?" Full names and emails need enrichment,
+"Could I speak with Dana, your VP and Controller?" Full names and emails need enrichment,
 which costs credits, so it is never done automatically.
 
 The search runs by itself for every company Zoomollo reads, when APOLLO_API_KEY is set in
@@ -115,7 +115,7 @@ def best(db: DB, company_id: int, fit_roles: list[str], ask_title: str = "") -> 
 
 
 def label(lead: dict | None) -> str:
-    """'Sally, VP, Controller'"""
+    """'Dana, VP, Controller'"""
     if not lead:
         return ""
     return lead["first_name"] + (f", {lead['title']}" if lead.get("title") else "")

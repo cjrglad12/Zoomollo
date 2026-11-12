@@ -45,7 +45,7 @@ def setup(tmp_path, monkeypatch, n=4):
     FakeSMTP.sent = []
     monkeypatch.setattr(crm.smtplib, "SMTP", FakeSMTP)
     for k, v in {"SMTP_HOST": "smtp.gmail.com", "SMTP_USER": "me@gmail.com", "SMTP_PASSWORD": "pw",
-                 "IMAP_HOST": "imap.gmail.com", "EMAIL_DAILY_LIMIT": "40", "EMAIL_CC": "casey@norton.com"}.items():
+                 "IMAP_HOST": "imap.gmail.com", "EMAIL_DAILY_LIMIT": "40", "EMAIL_CC": "you@example.com"}.items():
         monkeypatch.setenv(k, v)
     return db
 
@@ -57,7 +57,7 @@ def test_hourly_batch_best_first_one_per_company(tmp_path, monkeypatch):
     assert r["sent"] == 2 and r["new"] == 2
     assert [m["To"] for m in FakeSMTP.sent] == ["pat0@co0.com", "pat1@co1.com"]   # highest scores first
     assert "Tax Manager at Co 0" == FakeSMTP.sent[0]["Subject"]
-    assert FakeSMTP.sent[0]["Cc"] == "casey@norton.com"                             # EMAIL_CC on every send
+    assert FakeSMTP.sent[0]["Cc"] == "you@example.com"                             # EMAIL_CC on every send
     assert db.conn.execute("SELECT COUNT(*) FROM enrollments WHERE auto = 1").fetchone()[0] == 2
     r = autosend.run_hour(db, pause=0)                                             # next hour: the next two
     assert [m["To"] for m in FakeSMTP.sent[2:]] == ["pat2@co2.com", "pat3@co3.com"]

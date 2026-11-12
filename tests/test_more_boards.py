@@ -168,7 +168,7 @@ def test_dfw_number_first_and_undo_puts_it_back_in_place(tmp_path):
     assert today._main_line(db, cid, None) == "+12145550199"
     today.undo_outcome(db, undo)
     assert today._main_line(db, cid, None) == "+14694028429"     # back where it was, not at the end of the line
-    assert say_number("9727549014") == "972-754-9014" and say_number("+1 (972) 754-9014") == "972-754-9014"
+    assert say_number("5125550123") == "512-555-0123" and say_number("+1 (512) 555-0123") == "512-555-0123"
     assert say_number("") == ""
 
 

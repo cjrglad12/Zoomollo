@@ -36,8 +36,8 @@ NOMINATIM = "https://nominatim.openstreetmap.org/search"
 # Public map-data servers, tried in order; each is often overloaded (502/504), so _overpass()
 # retries and falls back to the next one instead of giving up on the first error.
 OVERPASS_SERVERS = [
-    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
 ]
 
 # Plain-English industry words -> OpenStreetMap tag values worth matching too.

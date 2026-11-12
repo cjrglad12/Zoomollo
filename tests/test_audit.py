@@ -192,7 +192,7 @@ def test_bad_number_in_a_blitz_keeps_the_card_and_shows_the_next_number(tmp_path
 def test_named_leaders_from_apollo_show_on_cards(tmp_path, monkeypatch):
     monkeypatch.setenv("ZOOMOLLO_NO_BACKGROUND", "1")
     monkeypatch.delenv("APOLLO_API_KEY", raising=False)
-    from zoomollo import blitz, leads
+    from zoomollo import leads
     from zoomollo.web import create_app
     path = str(tmp_path / "l.db")
     db = DB(path)
@@ -205,18 +205,18 @@ def test_named_leaders_from_apollo_show_on_cards(tmp_path, monkeypatch):
     found = [{"id": "a1", "first_name": "Katherine", "last_name_obfuscated": "Pe***y", "title": "Director, Talent Acquisition"},
              {"id": "a2", "first_name": "Katie", "last_name_obfuscated": "Gi***n", "title": "VP of Marketing"},
              {"id": "a3", "first_name": "Alex", "last_name_obfuscated": "Go***y", "title": "CFO"},
-             {"id": "a4", "first_name": "Sally", "last_name_obfuscated": "St***e", "title": "VP, Controller"}]
+             {"id": "a4", "first_name": "Dana", "last_name_obfuscated": "Ex***e", "title": "VP, Controller"}]
     assert leads.save(db, cid, found) == 3            # the recruiter is never saved
     db.commit()
-    assert leads.best(db, cid, ["Controller"], "CFO")["first_name"] == "Sally"
+    assert leads.best(db, cid, ["Controller"], "CFO")["first_name"] == "Dana"
     assert leads.find_for_company(db, cid) is None     # no key: no lookup, nothing breaks
     c = create_app(path).test_client()
     page = c.get("/").get_data(as_text=True)
-    assert "Ask for <b>Sally, VP, Controller</b>" in page and "Hi Sally" in page
+    assert "Ask for <b>Dana, VP, Controller</b>" in page and "Hi Dana" in page
     assert "Leaders found in Apollo" in c.get(f"/company/{cid}").get_data(as_text=True)
     c.post("/blitz/start", data={"source": "priority", "size": "5", "action": "start"})
     run = c.get("/blitz/run").get_data(as_text=True)
-    assert "ask for <b>Sally, VP, Controller</b>" in run and "put me through to Sally, your VP, Controller" in run
+    assert "ask for <b>Dana, VP, Controller</b>" in run and "put me through to Dana, your VP, Controller" in run
     # With a key, a new company's leaders are looked up when it is read (no network here).
     monkeypatch.setenv("APOLLO_API_KEY", "test")
     monkeypatch.setattr(leads, "search", lambda domain, timeout=20: [{"id": "b1", "first_name": "Ron", "title": "CEO"}])
