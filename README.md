@@ -244,7 +244,9 @@ Put `LOXO_AGENCY_SLUG` and `LOXO_API_KEY` in `zoomollo-settings.txt` (and `LOXO_
 Loxo finds emails and phone numbers (its Chrome extension on a LinkedIn profile, and its contact-finding agent). Its API has no "find contact info" call, so Zoomollo works around it:
 
 - **Add to Loxo & find contact info** (on Today and blitz cards when the person is missing an email or a direct line) adds them to Loxo as a Contact, copies in anything Loxo already has, and opens their LinkedIn profile in a new tab: click the Loxo extension there to find their details.
-- **Automatically:** every half hour Zoomollo adds the people on your best Today cards who are missing details to Loxo (`LOXO_AUTO_ADD` a day, default 15; 0 turns it off), and reads back the people it added over the last three weeks, copying in any email or phone Loxo now has. A work email at the company's domain is preferred; generic inboxes, toll-free and customer service numbers are never taken.
+- **Automatically:** every half hour Zoomollo adds people from your best Today cards who are missing details to Loxo: the person on the card first, then up to two colleagues who could also own the hire (others tied to the role, that team's leaders, HR / talent leaders, executives). `LOXO_AUTO_ADD` people a day, default 15; 0 turns it off. It reads back the people it added over the last three weeks.
+- **Every number and email Loxo has is kept**, labelled (mobile, work, direct, personal...), and shown on the card so you can pick: a mobile or direct line becomes the main number, a work email at the company's domain the main email. Generic inboxes, toll-free and customer service numbers are never taken.
+- **Other contacts at the company** fold out under each card ("2 other contacts at Acme"), each with their numbers, emails, LinkedIn and their own Loxo button.
 
 ## What it doesn't do (on purpose)
 

@@ -50,6 +50,11 @@ ROLES_MACRO = """{% macro roleslist(roles, show=5) %}{% if roles %}{% set total 
 {% if loop.last and loop.length > show %}</details>{% endif %}{% endfor %}</div>{% endif %}{% endmacro %}"""
 LOXO_MACRO = """{% macro loxobtn(p) %}{% if p and loxo_on %}<form class="fb" method="post" target="_blank" action="{{ url_for('person_loxo', pid=p.id) }}" style="display:inline">
 <button class="ghost" style="background:transparent;color:var(--accent);border:1px solid var(--line);padding:3px 10px;font-size:13px" title="Adds them to Loxo as a Contact and opens their LinkedIn profile: click the Loxo extension there to find their email and phone. Zoomollo copies in whatever Loxo finds.">{{ 'In Loxo · find contact info' if p.loxo_person_id else 'Add to Loxo & find contact info' }}</button></form>{% endif %}{% endmacro %}"""
+CHANNEL_MACRO = """{% macro chanlist(chs, skip=[]) %}{% set chs = chs|rejectattr('value', 'in', skip)|list %}{% if chs %}<div class="zm-chans" style="margin-top:4px;font-size:13px">{% for ch in chs %}{% if ch.type == 'phone' %}📞 <a href="tel:{{ ch.value }}">{{ ch.value|phone }}</a>{% else %}✉ <a href="mailto:{{ ch.value }}">{{ ch.value }}</a>{% endif %}{% if ch.label %} <span class="muted">{{ ch.label|lower }}</span>{% endif %}{{ ' · ' if not loop.last }}{% endfor %}</div>{% endif %}{% endmacro %}
+{% macro otherlist(others, company) %}{% if others %}<details class="zm-others" style="margin-top:6px"><summary class="muted" style="cursor:pointer;font-size:13px;padding:4px 0">{{ others|length }} other contact{{ 's' if others|length != 1 }} at {{ company }}</summary>
+{% for o in others %}<div style="margin:6px 0 0 8px;font-size:14px"><b>{{ o.name }}</b> · {{ o.title or '' }} · <a href="{{ o.linkedin_url or li_search(o.name, company) }}" target="_blank" rel="noopener" style="font-size:13px">LinkedIn</a>
+{{ chanlist(o.channels) }}{% if not o.channels %}<div class="muted" style="font-size:13px">no email or phone yet</div>{% endif %}
+{% if not o.email or o.email_status == 'guessed' or not o.phone %}<div style="margin-top:2px">{{ loxobtn(o) }}</div>{% endif %}</div>{% endfor %}</details>{% endif %}{% endmacro %}"""
 OL_MACRO = """{% macro olbadge(st) %}{% if st and st.level %}<span class="chip ol-{{ st.level }}" title="{{ st.reason }}">{{ {'blocked': '⛔ Off-limits', 'warn': 'Past client', 'info': 'In Loxo'}[st.level] }}</span>{% endif %}{% endmacro %}"""
 
 PAGE = """<!doctype html>
@@ -584,7 +589,7 @@ If it didn't open, <a href="{{ mailto }}">open it again</a>.</div>
 <a class="btn" href="{{ url_for('today_page') }}">No, not yet</a></form></div>
 <script>window.location.href = {{ mailto|tojson }};</script>"""
 
-TODAY = PHONE_MACRO + ROLES_MACRO + LOXO_MACRO + """<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><h2>Today</h2>
+TODAY = PHONE_MACRO + ROLES_MACRO + LOXO_MACRO + CHANNEL_MACRO + """<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><h2>Today</h2>
 <a class="btn" href="{{ url_for('blitz_page') }}" style="margin-left:auto" title="Work a call list one card at a time, with keyboard shortcuts">▶ Start call blitz</a></div>
 <div class="sub"><span id="zm-left">{{ rows|length }} account{{ 's' if rows|length != 1 }} to call</span> · {{ due|length }} follow-up{{ 's' if due|length != 1 }} due · {{ done|length }} logged today
 {% if not desk_set %} · <a href="{{ url_for('companies') }}">set your desk</a> so this list knows which roles you place{% endif %}</div>
@@ -621,7 +626,9 @@ TODAY = PHONE_MACRO + ROLES_MACRO + LOXO_MACRO + """<div style="display:flex;gap
 {% if not r.main_line and not (r.person and r.person.phone) %}<span class="muted">📞 no phone found</span>{% endif %}
 {% if r.person and r.person.email %}✉ <a href="mailto:{{ r.person.email }}">{{ r.person.email }}</a>{% if r.person.email_status == 'guessed' %} <span class="muted">(guessed)</span>{% endif %}{% endif %}
 {% if r.person %} · <a href="{{ r.person.linkedin_url or li_search(r.person.name, r.company) }}" target="_blank" rel="noopener">LinkedIn</a>{% endif %}</div>
+{% if r.person %}{{ chanlist(r.channels, [r.person.phone, r.person.email]) }}{% endif %}
 {% if r.person and (not r.person.email or r.person.email_status == 'guessed' or not r.person.phone) %}<div style="margin-top:4px">{{ loxobtn(r.person) }}</div>{% endif %}
+{{ otherlist(r.others, r.company) }}
 {% set num = (r.person.phone if r.person and r.person.phone else r.main_line) %}{% if num %}<a class="btn callbtn" href="tel:{{ num }}">📞 Call {{ num|phone }}</a>
 <div class="muted zm-linekind">{{ 'direct line' if r.person and r.person.phone else 'main line' }}{% if num|linenote %} · <b>{{ num|linenote }}</b>{% endif %}</div>{% endif %}
 <div style="margin-top:8px"><span class="muted">Why now:</span> {{ r.why_now|join(' · ') }}</div>
@@ -749,7 +756,7 @@ BLITZ_BUILD = """<h2>Call blitz</h2>
 <script>function zmSrc(){var c=document.querySelector('input[name=source]:checked').value==='custom';
 document.getElementById('zm-custom').style.opacity=c?1:.45;document.querySelectorAll('#zm-custom select,#zm-custom input').forEach(function(e){e.disabled=!c});}zmSrc();</script>"""
 
-BLITZ_RUN = PHONE_MACRO + ROLES_MACRO + LOXO_MACRO + """<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+BLITZ_RUN = PHONE_MACRO + ROLES_MACRO + LOXO_MACRO + CHANNEL_MACRO + """<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
 <h2 style="margin:0">Blitz: {{ s.name }}</h2>
 <span class="chip">card {{ s.i + 1 }} of {{ s['items']|length }}</span>
 <span style="font-size:14px"><b>{{ t.dials }}</b> dial{{ 's' if t.dials != 1 }} · <b>{{ t.conversations }}</b> conversation{{ 's' if t.conversations != 1 }} · <b>{{ t.voicemail }}</b> voicemail{{ 's' if t.voicemail != 1 }} · <b>{{ t.meeting }}</b> meeting{{ 's' if t.meeting != 1 }}{% if t.meeting %} 🎉{% endif %} · <span id="zm-clock" class="muted" data-start="{{ s.started }}"></span></span>
@@ -766,12 +773,14 @@ BLITZ_RUN = PHONE_MACRO + ROLES_MACRO + LOXO_MACRO + """<div style="display:flex
 {{ cosummary(c.about) }}
 {% if c.person %}<div style="margin-top:6px;font-size:17px"><b>{{ c.person.name }}</b> · {{ c.person.title or '' }} <span class="muted" style="font-size:13px">({{ c.why_person }})</span>
 · <a href="{{ c.person.linkedin_url or li_search(c.person.name, c.company) }}" target="_blank" rel="noopener" style="font-size:13px">LinkedIn</a>
-{% if not c.person.email or c.person.email_status == 'guessed' or not c.person.phone %} {{ loxobtn(c.person) }}{% endif %}</div>
+{% if not c.person.email or c.person.email_status == 'guessed' or not c.person.phone %} {{ loxobtn(c.person) }}{% endif %}
+{{ chanlist(c.channels, [c.phone]) }}</div>
 {% elif c.lead %}<div style="margin-top:6px;font-size:16px">Front desk · ask for <b>{{ c.lead_label }}</b>
 <span class="muted" style="font-size:13px">(last name hidden)</span><div style="margin-top:4px;font-size:14px">{% set left = apollo_left() %}{% if left is not none and not c.lead.enriched_at %}<form class="fb" method="post" action="{{ url_for('lead_enrich', lid=c.lead.id) }}" style="display:inline">
 <button class="ghost" {{ 'disabled' if not left }} title="Uses one free Apollo credit; personal emails and phones are never requested">Get full name &amp; email</button></form>
 <span class="muted" style="font-size:12px">{{ left }} free Apollo credit{{ '' if left == 1 else 's' }} left this month</span>{% elif c.lead.enriched_at and not c.lead.last_name %}<span class="muted" style="font-size:12px">· Apollo had no more on them</span>{% endif %}</div></div>
 {% else %}<div style="margin-top:6px;font-size:16px">Front desk · ask for the <b>{{ c.ask_for }}</b> · <a href="{{ li_search(c.ask_for, c.company) }}" target="_blank" rel="noopener" style="font-size:13px">find them on LinkedIn</a></div>{% endif %}
+{{ otherlist(c.others, c.company) }}
 {% if c.why_now %}<div style="margin-top:8px;font-size:14px"><span class="muted">Why now:</span> {{ c.why_now|join(' · ') }}</div>{% endif %}
 {{ roleslist(c.roles) }}
 {% if c.last %}<div class="muted" style="margin-top:4px;font-size:13px">Last touch: {{ c.last.body }} · {{ c.last.created_at[:10] }}{% if c.next_step %} · next step: {{ c.next_step }}{% endif %}</div>{% endif %}</div>

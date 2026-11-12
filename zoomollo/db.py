@@ -55,6 +55,16 @@ CREATE TABLE IF NOT EXISTS suppression (
     reason TEXT,
     added_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS person_channels (   -- every email / phone known for a person (Loxo returns several)
+    id INTEGER PRIMARY KEY,
+    person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    type TEXT NOT NULL CHECK (type IN ('email', 'phone')),
+    value TEXT NOT NULL,
+    label TEXT,                         -- Mobile, Work, Direct, Personal...
+    source TEXT,
+    added_at TEXT NOT NULL,
+    UNIQUE (person_id, type, value)
+);
 CREATE TABLE IF NOT EXISTS people (
     id INTEGER PRIMARY KEY,
     company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,

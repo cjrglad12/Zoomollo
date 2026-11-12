@@ -211,6 +211,25 @@ def pick_person(people: list, fit_roles: list[str]):
     return None, ""
 
 
+def other_people(people: list, chosen, fit_roles: list[str], n: int = 3) -> list:
+    """The next people worth calling about these roles, after the one on the card: others tied
+    to the roles, leaders of that team, talent / HR leaders, then executives."""
+    from .exclusions import is_support_title
+    depts = {department(t) for t in fit_roles} - {"other"}
+    fit_set = set(fit_roles)
+    level = lambda p: SENIORITY_RANK.get(p["seniority"] or "staff", 1)
+
+    def rank(p):
+        tied = bool(p["hiring_for"] and fit_set & {t.strip() for t in re.split(r";|\(\+", p["hiring_for"]) if t.strip()})
+        group = (0 if tied else 1 if p["department"] in depts and level(p) >= 2
+                 else 2 if p["department"] == "hr" and level(p) >= 2
+                 else 3 if p["department"] == "executive" or p["seniority"] == "c_level" else 9)
+        return (group, -_contact_score(p)[0], -level(p))
+    pool = [p for p in people if (not chosen or p["id"] != chosen["id"]) and not is_support_title(p["title"])]
+    pool = [p for p in pool if rank(p)[0] < 9]
+    return sorted(pool, key=rank)[:n]
+
+
 def clean_role(title: str) -> str:
     """'AI Software Engineer-Reliability (Contract) (On-site)' -> 'AI Software Engineer'."""
     t = re.sub(r"\([^)]*\)|\[[^\]]*\]", " ", title or "")
@@ -357,6 +376,9 @@ def _call_list(db: DB, limit: int = 25, today: date | None = None, with_pitches:
         person, why_person = pick_person(people, s.fit_roles)
         if person and person["phone"] and not dialable(person["phone"]):
             person = dict(person) | {"phone": None}
+        from .loxoenrich import channels
+        others = [dict(p) | {"channels": channels(db, p["id"])} for p in other_people(people, person, s.fit_roles)]
+        person_channels = channels(db, person["id"]) if person else []
         from . import leads as _leads
         lead = None if person else _leads.best(db, cid, s.fit_roles, ask_for(s.fit_roles))
         main = _main_line(db, cid, co["phone"])
@@ -385,6 +407,7 @@ def _call_list(db: DB, limit: int = 25, today: date | None = None, with_pitches:
                              pitches[0] if pitches else None, db.get_setting("my_company") or ""),
             "pitches": pitches, "ask_for": ask_for(s.fit_roles),
             "roles": open_roles(db, cid, s.fit_roles, today),
+            "others": others, "channels": person_channels,
             "stage": STAGE_NAMES.get(stage["stage"]) if stage else None,
             "next_step": stage["next_step"] if stage else None, "due": bool(due),
             "last": lt,

@@ -139,3 +139,34 @@ def test_button_adds_then_opens_linkedin(tmp_path, monkeypatch):
     r = c.post(f"/person/{pid}/loxo")
     assert r.status_code == 302 and r.headers["Location"] == "https://www.linkedin.com/in/dana-example"
     assert fake.created and "In Loxo · find contact info" in c.get("/").get_data(as_text=True)
+
+
+def test_every_number_and_email_and_more_people(tmp_path, monkeypatch):
+    monkeypatch.setenv("ZOOMOLLO_NO_BACKGROUND", "1")
+    monkeypatch.setenv("LOXO_AUTO_ADD", "10")
+    db, cid, pid = setup_person(tmp_path)
+    extra = [db.add_person(cid, n, t) for n, t in (("Lee Sample", "Controller"), ("Pat Demo", "VP Human Resources"),
+                                                   ("Kim Test", "Chief Executive Officer"),
+                                                   ("Al Rep", "Customer Service Representative"))]
+    db.commit()
+    assert extra[3] is None                                                     # a CSR is never kept
+    loxo = FakeLoxo()
+    assert loxoenrich.auto(db, client=loxo)["added"] == 3                      # the card's person + two colleagues
+    lid = db.conn.execute("SELECT loxo_person_id FROM people WHERE id = ?", (pid,)).fetchone()[0]
+    loxo.records[lid].update(
+        emails=[{"value": "dana@acme.test", "email_type": {"name": "Work"}}, {"value": "dana@gmail.test", "type": "personal"}],
+        phones=[{"value": "(214) 555-0101", "phone_type": {"name": "Work"}},
+                {"value": "(469) 555-0177", "phone_type": {"name": "Mobile"}}, {"value": "888-555-0100"}])
+    got = loxoenrich.pull(db, pid, loxo)
+    assert set(got) == {"dana@acme.test", "dana@gmail.test", "+12145550101", "+14695550177"}
+    p = db.conn.execute("SELECT phone, email FROM people WHERE id = ?", (pid,)).fetchone()
+    assert p["phone"] == "+14695550177" and p["email"] == "dana@acme.test"     # mobile first, work email first
+    chans = loxoenrich.channels(db, pid)
+    assert [c["value"] for c in chans][:2] == ["+14695550177", "dana@acme.test"] and len(chans) == 4
+    assert {c["label"] for c in chans} == {"Mobile", "Work", "Personal"}
+    monkeypatch.setenv("LOXO_AGENCY_SLUG", "x")
+    monkeypatch.setenv("LOXO_API_KEY", "k")
+    from zoomollo.web import create_app
+    html = create_app(db.path).test_client().get("/").get_data(as_text=True)
+    assert "(214) 555-0101" in html and "dana@gmail.test" in html and "personal" in html
+    assert "2 other contacts at Acme" in html and "Pat Demo" in html and "Kim Test" in html and "Al Rep" not in html
