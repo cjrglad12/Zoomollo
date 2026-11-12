@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import heapq
 import logging
+import os
 import re
+import threading
 import time
 from typing import Iterator
 from urllib.parse import urlparse
@@ -37,6 +39,31 @@ SKIP_EXT = (
     ".xls", ".xlsx", ".ppt", ".pptx", ".woff", ".woff2", ".ttf",
 )
 
+# A homepage or sitemap bigger than this is cut off. Parsing tens of megabytes
+# holds the whole program (including the web UI) until it finishes.
+MAX_BODY = 3_000_000
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value >= 0 else default
+
+
+def crawl_timeout() -> float:
+    """Seconds one HTTP request may take. CRAWL_TIMEOUT in settings; default 15."""
+    return _env_float("CRAWL_TIMEOUT", 15.0)
+
+
+def crawl_budget() -> float:
+    """Seconds one company crawl may take. CRAWL_BUDGET_SECONDS in settings; default 180."""
+    return _env_float("CRAWL_BUDGET_SECONDS", 180.0)
+
 
 def normalize_domain(domain_or_url: str) -> str:
     s = domain_or_url.strip()
@@ -55,29 +82,116 @@ def score(url: str) -> int:
 
 class Crawler:
     def __init__(self, max_pages: int = 40, delay: float = 1.0, timeout: float = 15.0,
-                 user_agent: str = USER_AGENT, region: str = "US"):
+                 user_agent: str = USER_AGENT, region: str = "US", *, budget: float | None = None):
         self.max_pages = max_pages
         self.delay = delay
         self.timeout = timeout
+        # Seconds for this crawler's whole life. crawl_company makes one crawler per company and
+        # passes CRAWL_BUDGET_SECONDS. None (a crawler shared by a directory read or a prospect
+        # search, across many sites) has no total limit; each request still has `timeout`.
+        self.budget = budget
         self.region = region
+        self.user_agent = user_agent
+        self.deadline: float | None = None
+        self.gave_up = False
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": user_agent, "Accept": "text/html,*/*;q=0.5"})
         self._robots: dict[str, RobotFileParser | None] = {}
         self._last_hit: dict[str, float] = {}
 
+    def _ensure_deadline(self) -> None:
+        if self.deadline is None:
+            self.deadline = time.monotonic() + (self.budget if self.budget is not None else float("inf"))
+
+    def _over(self) -> bool:
+        """True once this company's time budget is spent."""
+        self._ensure_deadline()
+        if time.monotonic() >= self.deadline:
+            self.gave_up = True
+            return True
+        return False
+
+    def _reset_session(self) -> None:
+        """Drop a request that ignored its timeout (a hung DNS lookup, a trickle). Closing the
+        socket lets that attempt end; the next request uses a fresh session."""
+        old = self.session
+        self.session = requests.Session()
+        self.session.headers.update({"User-Agent": self.user_agent, "Accept": "text/html,*/*;q=0.5"})
+        try:
+            old.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _read_capped(self, response, deadline: float) -> str | None:
+        data = bytearray()
+        try:
+            for chunk in response.iter_content(65536):
+                if time.monotonic() > deadline:
+                    return None
+                if not chunk:
+                    continue
+                data.extend(chunk)
+                if len(data) >= MAX_BODY:
+                    break  # keep the start of a huge page or sitemap; don't read the rest
+        finally:
+            response.close()
+        encoding = response.encoding or "utf-8"
+        return bytes(data).decode(encoding, errors="replace")
+
+    def _request(self, url: str, allow_redirects: bool = True):
+        """(response, text) or None. One request cannot outlive `timeout`, and nothing is read
+        once the company budget is spent. The read runs on a side thread so a lookup that
+        ignores socket timeouts (common on Windows) cannot stall the caller."""
+        if self._over():
+            return None
+        req_deadline = min(self.deadline, time.monotonic() + self.timeout)
+        wait = req_deadline - time.monotonic()
+        if wait <= 0:
+            self.gave_up = True
+            return None
+        box: dict = {}
+
+        def run() -> None:
+            try:
+                sock = (min(5.0, self.timeout), min(self.timeout, max(0.1, wait)))
+                try:
+                    resp = self.session.get(url, timeout=sock, allow_redirects=allow_redirects, stream=True)
+                except requests.exceptions.SSLError:
+                    # Some small-company sites have a broken certificate but load fine over http.
+                    if not url.startswith("https://"):
+                        raise
+                    resp = self.session.get("http://" + url[len("https://"):], timeout=sock,
+                                            allow_redirects=allow_redirects, stream=True)
+                box["resp"] = resp
+                box["text"] = self._read_capped(resp, req_deadline)
+            except Exception as exc:  # noqa: BLE001 - a failed fetch is a skip, not a crash
+                box["err"] = exc
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        thread.join(wait)
+        if thread.is_alive():
+            self._reset_session()
+            return None
+        text = box.get("text")
+        if box.get("err") is not None or text is None or "resp" not in box:
+            return None
+        return box["resp"], text
+
     def _robots_for(self, base: str) -> RobotFileParser | None:
         if base not in self._robots:
             rp = RobotFileParser()
-            try:
-                r = self.session.get(base + "/robots.txt", timeout=self.timeout)
-                if r.status_code in (401, 403):
+            got = self._request(base + "/robots.txt")
+            if not got:
+                rp = None
+            else:
+                response, text = got
+                if response.status_code in (401, 403):
                     rp.disallow_all = True
-                elif r.ok:
-                    rp.parse(r.text.splitlines())
+                elif response.ok:
+                    rp.parse(text.splitlines())
                 else:
                     rp = None  # no robots.txt: everything allowed
-            except requests.RequestException:
-                rp = None
             self._robots[base] = rp
         return self._robots[base]
 
@@ -94,43 +208,41 @@ class Crawler:
 
     def fetch(self, url: str) -> tuple[str, str] | None:
         """Returns (final_url, html) or None."""
+        if self._over():
+            return None
         if not self.allowed(url):
             log.info("robots.txt disallows %s", url)
             return None
         self._throttle(urlparse(url).netloc)
-        try:
-            try:
-                r = self.session.get(url, timeout=self.timeout, allow_redirects=True)
-            except requests.exceptions.SSLError:
-                # Some small-company sites have a broken certificate but load fine over http.
-                if not url.startswith("https://"):
-                    raise
-                r = self.session.get("http://" + url[len("https://"):], timeout=self.timeout, allow_redirects=True)
-        except requests.RequestException as e:
-            log.info("fetch failed %s: %s", url, e)
+        if self._over():
             return None
-        if not r.ok or "html" not in r.headers.get("Content-Type", ""):
+        got = self._request(url)
+        if not got:
+            log.info("fetch failed %s", url)
             return None
-        return r.url, r.text
+        response, text = got
+        if not response.ok or "html" not in response.headers.get("Content-Type", ""):
+            return None
+        return response.url, text
 
     def sitemap_urls(self, base: str, limit: int = 2000) -> list[str]:
         rp = self._robots_for(base)
         maps = list((rp.site_maps() if rp else None) or []) or [base + "/sitemap.xml"]
         urls: list[str] = []
         fetched = 0
-        while maps and fetched < 6 and len(urls) < limit:
+        while maps and fetched < 6 and len(urls) < limit and not self._over():
             sm = maps.pop(0)
             fetched += 1
             if not self.allowed(sm):
                 continue
-            try:
-                r = self.session.get(sm, timeout=self.timeout)
-            except requests.RequestException:
+            got = self._request(sm)
+            if not got:
                 continue
-            if not r.ok or "<loc>" not in r.text:
+            response, text = got
+            if not response.ok or "<loc>" not in text:
                 continue
-            locs = re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", r.text)
-            if "<sitemapindex" in r.text:
+            locs = re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", text)
+            if "<sitemapindex" in text:
                 # Child sitemaps: people / team / job ones first.
                 maps += sorted(locs, key=lambda u: -score(u))
             else:
@@ -145,7 +257,9 @@ class Crawler:
         scorer(url, link_text) -> extra priority, for custom crawls such as
         member directories. include_subdomains also follows e.g.
         business.chamber.org from chamber.org. keep_query keeps ?page=2 style links.
+        Stops when the company time budget is spent, even if pages remain.
         """
+        self._ensure_deadline()
         domain = normalize_domain(domain_or_url)
         base = f"https://{domain}"
         queue: list[tuple[int, int, str]] = []
@@ -174,13 +288,13 @@ class Crawler:
         for path in (SEED_PATHS if seed_paths is None else seed_paths):
             push(base + path)
         # Sitemaps list pages the menus don't link to (bios, individual job posts).
-        if use_sitemap:
+        if use_sitemap and not self._over():
             for url in self.sitemap_urls(base):
                 if score(url) > 0 or (scorer and scorer(url, "") > 0):
                     push(url)
 
         fetched = 0
-        while queue and fetched < self.max_pages:
+        while queue and fetched < self.max_pages and not self._over():
             _, _, url = heapq.heappop(queue)
             got = self.fetch(url)
             if not got:

@@ -57,9 +57,18 @@ IMAP_PASSWORD=
 EMAIL_DAILY_LIMIT=
 
 # --- Re-checking companies for changes (new / reposted / closed roles, new leaders)
-# Days between checks of each company (default 7) and most companies checked per hour (default 20)
+# Days between checks of each company (default 7) and most companies checked per hour (default 20).
+# A site that fails to load is skipped for 6 hours, then longer (up to a week) if it keeps failing,
+# so the same dead sites don't use up every hourly slot.
 RECHECK_DAYS=
 RECHECK_PER_HOUR=
+
+# --- Crawling
+# One page request gives up after this many seconds (default 15).
+# One company gives up after CRAWL_BUDGET_SECONDS (default 180) so a slow site is abandoned,
+# marked failed, and the next company starts. The web page keeps working either way.
+CRAWL_TIMEOUT=
+CRAWL_BUDGET_SECONDS=
 
 # --- AI message drafting on this computer with Ollama (https://ollama.com); blank = defaults
 OLLAMA_MODEL=

@@ -23,6 +23,7 @@ LEVEL_LABELS = {"c_level": "Exec", "vp": "VP", "director": "Director", "manager"
 EMAIL_MACRO = """{% macro email_cell(p) %}
 {% if p.email %}<a href="mailto:{{ p.email }}">{{ p.email }}</a>
 <span class="chip st-{{ p.email_status }}">{{ p.email_status }}{% if p.email_status == 'guessed' %} · try {{ (p.email_attempts or 0) + 1 }}/10{% endif %}</span>
+{% if p.review_note %}<span class="chip" title="{{ p.review_note }}">needs review</span>{% endif %}
 {% if p.email_status != 'confirmed' %}<form class="fb" method="post" action="{{ url_for('email_feedback', pid=p.id, action='good') }}"><button title="Correct">✓</button></form>
 <form class="fb" method="post" action="{{ url_for('email_feedback', pid=p.id, action='bad') }}"><button class="no" title="Wrong / bounced: try the next guess">✗</button></form>{% endif %}
 {% elif p.email_status == 'failed' %}<span class="chip st-failed">no match after {{ p.email_attempts }} tries</span>
@@ -49,7 +50,9 @@ ROLES_MACRO = """{% macro roleslist(roles, show=5) %}{% if roles %}{% set total 
 {%- if j.location %} <span class="muted">· {{ j.location }}</span>{% endif %}{% if j.age %} <span class="muted">· {{ j.age }}</span>{% endif %}</div>
 {% if loop.last and loop.length > show %}</details>{% endif %}{% endfor %}</div>{% endif %}{% endmacro %}"""
 LOXO_MACRO = """{% macro loxobtn(p) %}{% if p and loxo_on %}<form class="fb" method="post" target="_blank" action="{{ url_for('person_loxo', pid=p.id) }}" style="display:inline">
-<button class="ghost" style="background:transparent;color:var(--accent);border:1px solid var(--line);padding:3px 10px;font-size:13px" title="Adds them to Loxo as a Contact and opens their LinkedIn profile: click the Loxo extension there to find their email and phone. Zoomollo copies in whatever Loxo finds.">{{ 'In Loxo · find contact info' if p.loxo_person_id else 'Add to Loxo & find contact info' }}</button></form>{% endif %}{% endmacro %}"""
+<button class="ghost" style="background:transparent;color:var(--accent);border:1px solid var(--line);padding:3px 10px;font-size:13px" title="Adds them to Loxo as a Contact and opens their LinkedIn profile: click the Loxo extension there to find their email and phone. Zoomollo copies in whatever Loxo finds.">{{ 'In Loxo · find contact info' if p.loxo_person_id else 'Add to Loxo & find contact info' }}</button></form>
+{% if p.loxo_person_id %}<form class="fb" method="post" action="{{ url_for('person_loxo_channels', pid=p.id) }}" style="display:inline">
+<button class="ghost" style="background:transparent;color:var(--accent);border:1px solid var(--line);padding:3px 10px;font-size:13px" title="Adds emails and phones Zoomollo found that are not already on this Loxo record. Does not change or remove anything Loxo already has.">Push new contact info</button></form>{% endif %}{% endif %}{% endmacro %}"""
 CHANNEL_MACRO = """{% macro chanlist(chs, skip=[]) %}{% set chs = chs|rejectattr('value', 'in', skip)|list %}{% if chs %}<div class="zm-chans" style="margin-top:4px;font-size:13px">{% for ch in chs %}{% if ch.type == 'phone' %}📞 <a href="tel:{{ ch.value }}">{{ ch.value|phone }}</a>{% else %}✉ <a href="mailto:{{ ch.value }}">{{ ch.value }}</a>{% endif %}{% if ch.label %} <span class="muted">{{ ch.label|lower }}</span>{% endif %}{{ ' · ' if not loop.last }}{% endfor %}</div>{% endif %}{% endmacro %}
 {% macro otherlist(others, company) %}{% if others %}<details class="zm-others" style="margin-top:6px"><summary class="muted" style="cursor:pointer;font-size:13px;padding:4px 0">{{ others|length }} other contact{{ 's' if others|length != 1 }} at {{ company }}</summary>
 {% for o in others %}<div style="margin:6px 0 0 8px;font-size:14px"><b>{{ o.name }}</b> · {{ o.title or '' }} · <a href="{{ o.linkedin_url or li_search(o.name, company) }}" target="_blank" rel="noopener" style="font-size:13px">LinkedIn</a>
@@ -502,7 +505,10 @@ Look it up, paste its website here, and Zoomollo reads it in the background.
 {% for p in ps %}<div class="person"><div class="n">{{ p.name }} {% if p.hiring_for %}<span class="chip hm">hiring</span>{% endif %}</div>
 <div class="t">{{ p.title or '' }}{% if p.seniority %} · {{ levels[p.seniority] }}{% endif %}</div>
 <div class="c v">{{ email_cell(p) }}
-{% if p.phone %}<br>{{ p.phone|phone }} <a class="msg" href="{{ url_for('message', person=p.id) }}" title="Send a text">💬</a>{% else %}<br><span class="muted">no direct phone</span>{% endif %}<br>{{ linkedin(dict(p, company_name=co.name or co.key)) }}</div>
+{% if p.phone %}<br>{{ p.phone|phone }} <a class="msg" href="{{ url_for('message', person=p.id) }}" title="Send a text">💬</a>{% else %}<br><span class="muted">no direct phone</span>{% endif %}
+{% if loxo_on and p.loxo_person_id %}<form class="fb" method="post" action="{{ url_for('person_loxo_channels', pid=p.id) }}" style="display:inline">
+<button class="ghost" title="Adds emails and phones Zoomollo found that are not already on this Loxo record. Does not change or remove anything Loxo already has.">Push new contact info to Loxo</button></form>{% endif %}
+<br>{{ linkedin(dict(p, company_name=co.name or co.key)) }}</div>
 </div>{% endfor %}</div>{% endfor %}</div>
 {% else %}<p class="muted">No people found yet.</p>{% endif %}</details>
 
@@ -1438,12 +1444,33 @@ def create_app(db_path: str | None = None) -> Flask:
         import time as _t
         notices.appendleft({"text": text, "tab": tab, "at": _t.time()})
 
+    from . import workqueue
+
+    def submit(action: str, item: str, opts: dict | None = None) -> bool:
+        """Queue work. Crawls and imports are saved in the database first, so a restart
+        continues them, and the same one is not queued twice."""
+        opts = dict(opts or {})
+        if action in workqueue.DURABLE and "_task_id" not in opts:
+            task_id = workqueue.enqueue(DB(db_path), action, item, opts)
+            if not task_id:
+                log.appendleft(f"already queued: {action} {item}")
+                return False
+            opts["_task_id"] = task_id
+        tasks.put((action, item, opts))
+        return True
+
     def worker():
         db = DB(db_path)  # own connection for the background thread
         while True:
             action, item, opts = tasks.get()
             state["busy"] += 1
+            task_id = opts.get("_task_id")
             try:
+                if task_id and not opts.get("_claimed"):
+                    if not workqueue.claim(db, task_id):
+                        task_id = None
+                        continue  # a restart already handed this one to another pass
+                    opts = {**opts, "_claimed": True}
                 if action == "inbox":
                     from . import crm
                     r = crm.check_inbox(db)
@@ -1493,7 +1520,8 @@ def create_app(db_path: str | None = None) -> Flask:
                     if r.get("blocked"):
                         log.appendleft(f"✗ {item}: skipped, {r['blocked']}")
                     elif not r["pages"]:
-                        log.appendleft(f"✗ {item}: site didn't load, nothing saved from it. Check the address.")
+                        extra = " Gave up after the time limit and backed off." if r.get("gave_up") else ""
+                        log.appendleft(f"✗ {item}: site didn't load, nothing saved from it. Check the address.{extra}")
                     else:
                         log.appendleft(f"✓ {item}: {r['pages']} pages, {r['emails']} emails, {r['people']} people")
                     if action == "addco":
@@ -1513,6 +1541,8 @@ def create_app(db_path: str | None = None) -> Flask:
                         board, _, slug = ref.partition(":")
                         r = pipeline.import_jobs(db, board, slug)
                         log.appendleft(f"✓ {ref}: {r['jobs']} jobs, {r['emails']} emails")
+                if task_id:
+                    workqueue.finish(db, task_id, "done")
             except Exception as e:  # noqa: BLE001
                 try:
                     db.conn.rollback()  # never leave a half-finished write holding the database
@@ -1521,14 +1551,31 @@ def create_app(db_path: str | None = None) -> Flask:
                 tries = opts.get("_tries", 0)
                 if "database is locked" in str(e) and tries < 3:
                     # Another task (e.g. a big Loxo sync) was writing; try again shortly.
+                    new_opts = {**opts, "_tries": tries + 1, "_claimed": True}
+                    if task_id:
+                        workqueue.keep(db, task_id, new_opts)
                     log.appendleft(f"… {item}: database busy, retrying in 30s")
-                    threading.Timer(30, tasks.put, args=((action, item, {**opts, "_tries": tries + 1}),)).start()
+                    threading.Timer(30, tasks.put, args=((action, item, new_opts),)).start()
                 else:
+                    if task_id:
+                        workqueue.finish(db, task_id, "failed")
+                    if action in ("crawl", "addco"):
+                        try:
+                            from .crawler import normalize_domain as _norm
+                            from .pipeline import note_crawl_result
+                            row = db.conn.execute(
+                                "SELECT id FROM companies WHERE key = ?", (_norm(str(item)),)).fetchone()
+                            if row:
+                                note_crawl_result(db, row["id"], False)
+                        except Exception:  # noqa: BLE001
+                            pass
                     log.appendleft(f"✗ {item}: {e}")
             finally:
                 state["busy"] -= 1
                 tasks.task_done()
 
+    for queued in workqueue.recover(DB(db_path)):
+        tasks.put(queued)  # tasks left waiting, or running when the process last stopped
     threading.Thread(target=worker, daemon=True).start()
 
     def warm_up():
@@ -2034,8 +2081,8 @@ def create_app(db_path: str | None = None) -> Flask:
         r["crawling"] = 0
         if f.get("crawl"):
             for d in r["new_domains"][:300]:
-                tasks.put(("crawl", d, {}))
-            r["crawling"] = min(len(r["new_domains"]), 300)
+                if submit("crawl", d, {}):
+                    r["crawling"] += 1
         db.set_setting("csv_import_pending", "")
         db.set_setting("csv_import_last", _json.dumps({k: v for k, v in r.items() if k != "new_domains"}))
         db.commit()
@@ -2184,27 +2231,26 @@ def create_app(db_path: str | None = None) -> Flask:
         if action == "prospect":
             what, where = request.form.get("what", "").strip(), request.form.get("where", "").strip()
             if what and where:
-                tasks.put(("prospect", f"{what} in {where}",
-                           {"what": what, "where": where, "limit": int(request.form.get("limit") or 25)}))
-                log.appendleft(f"queued: {what} in {where}")
+                if submit("prospect", f"{what} in {where}",
+                          {"what": what, "where": where, "limit": int(request.form.get("limit") or 25)}):
+                    log.appendleft(f"queued: {what} in {where}")
             return redirect(url_for("find"))
         if action == "addco":
             site, what, where = (request.form.get(k, "").strip() for k in ("site", "what", "where"))
             if site:
-                tasks.put(("addco", site, {"what": what, "where": where}))
-                log.appendleft(f"queued: add {site}" + (f" ({what}, {where})" if what or where else ""))
+                if submit("addco", site, {"what": what, "where": where}):
+                    log.appendleft(f"queued: add {site}" + (f" ({what}, {where})" if what or where else ""))
             return redirect(url_for("find"))
         if action == "directory":
             what, where = request.form.get("what", "").strip(), request.form.get("where", "").strip()
             for it in [ln.strip() for ln in request.form.get("items", "").splitlines() if ln.strip()]:
-                if where:
-                    tasks.put(("directory", it, {"what": what, "where": where,
-                                                 "limit": int(request.form.get("limit") or 40)}))
+                if where and submit("directory", it, {"what": what, "where": where,
+                                                      "limit": int(request.form.get("limit") or 40)}):
                     log.appendleft(f"queued directory {it}" + (f" ({what})" if what else ""))
             return redirect(url_for("find"))
         for it in [ln.strip() for ln in request.form.get("items", "").splitlines() if ln.strip()]:
-            tasks.put((action, it, {}))
-            log.appendleft(f"queued {action} {it}")
+            if submit(action, it, {}):
+                log.appendleft(f"queued {action} {it}")
         return redirect(url_for("find"))
 
     # --- messages -------------------------------------------------------------
@@ -2833,6 +2879,26 @@ def create_app(db_path: str | None = None) -> Flask:
             log.appendleft(f"✗ Loxo: couldn't add {p['name']}: {e}")
         return redirect(p["linkedin_url"] or linkedin_search_url(p["name"], p["company_name"] or p["company_key"]))
 
+    @app.post("/person/<int:pid>/loxo-channels")
+    def person_loxo_channels(pid: int):
+        """Add emails and phones Zoomollo found that this person's Loxo record does not have yet."""
+        from . import loxoenrich
+        db = DB(db_path)
+        person = db.conn.execute("SELECT name FROM people WHERE id = ?", (pid,)).fetchone()
+        if not person:
+            abort(404)
+        try:
+            result = loxoenrich.push_channels(db, pid)
+            if result.get("reason"):
+                log.appendleft(f"Loxo: {person['name']} not updated ({result['reason']})")
+            elif result["added"]:
+                log.appendleft(f"✓ Loxo: added {', '.join(result['added'])} to {person['name']}")
+            else:
+                log.appendleft(f"✓ Loxo: {person['name']} already had those emails and phones")
+        except Exception as e:  # noqa: BLE001
+            log.appendleft(f"✗ Loxo: couldn't update {person['name']}: {e}")
+        return redirect(request.referrer or url_for("today_page"))
+
     @app.post("/company/<int:cid>/leads")
     def company_leads(cid: int):
         from . import leads as _leads
@@ -2932,8 +2998,8 @@ def create_app(db_path: str | None = None) -> Flask:
         if not db.company_row(cid):
             abort(404)
         keep = db.set_website(cid, site)
-        tasks.put(("crawl", normalize_domain(site), {}))
-        log.appendleft(f"Website added: {normalize_domain(site)}, reading it now")
+        if submit("crawl", normalize_domain(site), {}):
+            log.appendleft(f"Website added: {normalize_domain(site)}, reading it now")
         return redirect(url_for("company", cid=keep, added=1))
 
     @app.post("/company/<int:cid>/block")

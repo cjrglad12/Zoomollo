@@ -181,6 +181,148 @@ def pull(db: DB, person_id: int, client=None) -> dict:
     return new
 
 
+def _zoomollo_channels(db: DB, person) -> tuple[list[str], list[str]]:
+    """Emails and phones Zoomollo found (not guesses, not copies that only came from Loxo)."""
+    from .exclusions import is_excluded_email
+    from .extract import normalize_phone
+    from .today import dialable
+    emails: list[str] = []
+    phones: list[str] = []
+
+    def add_email(value: str | None) -> None:
+        value = (value or "").strip().lower()
+        if (value not in emails and "@" in value and not is_excluded_email(value)
+                and not db.is_suppressed(value) and not db.is_bad_email(value)):
+            emails.append(value)
+
+    def add_phone(raw: str | None) -> None:
+        ph = normalize_phone(raw) if raw else None
+        if ph and ph not in phones and dialable(ph) and not db.is_suppressed(ph):
+            phones.append(ph)
+
+    if person["email"] and person["email_status"] in ("found", "confirmed"):
+        add_email(person["email"])
+    add_phone(person["phone"])
+    for row in db.conn.execute(
+            "SELECT type, value, source, label FROM person_channels WHERE person_id = ?", (person["id"],)):
+        if (row["source"] or "") == "loxo":
+            continue  # already came from Loxo; pushing it back can't add anything new
+        if row["type"] == "email" and (row["label"] or "").lower() != "guessed":
+            add_email(row["value"])
+        elif row["type"] == "phone":
+            add_phone(row["value"])
+    return emails, phones
+
+
+def _loxo_has(rec: dict) -> tuple[set[str], set[str]]:
+    """Emails and phones already on one Loxo person, normalized the same way Zoomollo stores them."""
+    from .extract import normalize_phone
+    emails = {e.lower() for e, _ in _entries(rec.get("emails"), "email") + _entries([rec.get("email")], "email") if e}
+    phones = set()
+    for raw, _ in _entries(rec.get("phones"), "phone") + _entries([rec.get("phone")], "phone"):
+        ph = normalize_phone(raw)
+        if ph:
+            phones.add(ph)
+    return emails, phones
+
+
+def _post_channel(client, path: str, payload: dict) -> bool:
+    """POST one new email or phone. True if Loxo accepted it.
+
+    Loxo's add-email and add-phone calls only create a value. A 400/422 means Loxo
+    would not add it (often because it is already there); the record is left as it was.
+    429 uses the same Retry-After / backoff as every other Loxo call, then raises.
+    """
+    from .loxo import request_with_backoff
+    response = request_with_backoff(
+        lambda: client.session.post(f"{client.base}/{path}", json=payload, timeout=30))
+    if response.status_code in (400, 422):
+        return False
+    response.raise_for_status()
+    return True
+
+
+def push_channels(db: DB, person_id: int, client=None, dry_run: bool = False) -> dict:
+    """Add emails and phones Zoomollo found onto this person's existing Loxo record.
+
+    Only values Loxo does not already have are sent. Nothing on the Loxo record is
+    changed or deleted. Running it again adds nothing. Guesses are not sent.
+    Returns {"added": [...], "already": [...], "reason": None or a short explanation}.
+    """
+    person = db.conn.execute("SELECT * FROM people WHERE id = ?", (person_id,)).fetchone()
+    if not person:
+        return {"added": [], "already": [], "reason": "contact no longer in Zoomollo"}
+    if not person["loxo_person_id"]:
+        return {"added": [], "already": [], "reason": "not linked to a Loxo person"}
+    client = _client(client)
+    if not client:
+        return {"added": [], "already": [], "reason": "Loxo isn't connected"}
+    emails, phones = _zoomollo_channels(db, person)
+    rec = client.get(f"people/{int(person['loxo_person_id'])}")
+    rec = rec.get("person", rec) if isinstance(rec, dict) else {}
+    have_emails, have_phones = _loxo_has(rec)
+    missing = [e for e in emails if e not in have_emails] + [p for p in phones if p not in have_phones]
+    already = [e for e in emails if e in have_emails] + [p for p in phones if p in have_phones]
+    if dry_run or not missing:
+        return {"added": [], "already": already, "reason": None, "would_add": missing if dry_run else []}
+    added = []
+    lid = int(person["loxo_person_id"])
+    for value in missing:
+        if "@" in value:
+            ok = _post_channel(client, f"people/{lid}/emails", {"person_email": {"value": value}})
+        else:
+            ok = _post_channel(client, f"people/{lid}/phones", {"person_phone": {"value": value}})
+        if ok:
+            added.append(value)
+    if added:
+        from . import crm
+        crm.log(db, person["company_id"], "system",
+                f"Added to Loxo for {person['name']}: " + ", ".join(added), person_id)
+        db.commit()
+    return {"added": added, "already": already, "reason": None, "would_add": []}
+
+
+def push_linked(db: DB, client=None, dry_run: bool = True, limit: int = 100,
+                person_id: int | None = None) -> dict:
+    """Push new channels for people already linked to Loxo. Stops for the run on a 429.
+
+    Dry run (the default) lists what would be added and does not POST. LOXO_AUTO_ADD
+    does not apply: this never creates a person, it only fills in contact channels.
+    """
+    out = {"people": 0, "added": 0, "rate_limited": False, "reason": None, "details": []}
+    client = _client(client)
+    if not client:
+        out["reason"] = "Loxo isn't connected"
+        return out
+    if person_id:
+        ids = [person_id]
+    else:
+        # Never-checked people first, then the longest ago, so repeated runs work through everyone.
+        ids = [r[0] for r in db.conn.execute(
+            "SELECT id FROM people WHERE loxo_person_id IS NOT NULL "
+            "ORDER BY loxo_channels_at IS NOT NULL, loxo_channels_at, id LIMIT ?", (limit,))]
+    for pid in ids:
+        out["people"] += 1
+        try:
+            result = push_channels(db, pid, client, dry_run=dry_run)
+        except Exception as exc:  # noqa: BLE001 - one rate limit stops the batch; one bad record does not
+            if _rate_limited(exc):
+                out["rate_limited"] = True  # this person was attempted; the rest wait
+                break
+            out["details"].append({"id": pid, "error": str(exc)[:200]})
+            continue
+        if not dry_run:
+            from .db import now
+            db.conn.execute("UPDATE people SET loxo_channels_at = ? WHERE id = ?", (now(), pid))
+            db.commit()
+        got = result.get("would_add") if dry_run else result.get("added")
+        out["added"] += len(got or [])
+        if got or result.get("reason"):
+            out["details"].append({"id": pid, **{k: v for k, v in result.items() if k != "would_add"},
+                                   "would_add": result.get("would_add") or []})
+    return out
+
+
 def auto(db: DB, client=None, progress=None, limit: int | None = None) -> dict:
     """Read back people added recently, then add the best prospects who are missing details.
 
