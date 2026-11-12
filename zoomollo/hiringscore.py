@@ -457,6 +457,9 @@ def _score_all(db: DB, desk: Desk, today: date) -> dict[int, Score]:
         if fit and not big and _RESIDENTIAL_CO.search(" ".join(x or "" for x in (co["name"], co["industry"]))):
             big = "residential / home services company"
         if fit and not big:
+            from .geo import abroad_reason
+            big = abroad_reason([j["location"] for j in jobs.get(cid, [])], co["abroad_note"])
+        if fit and not big:
             big = wrong_size(co["headcount"], desk)
             if not big and (desk.min_headcount or desk.max_headcount):
                 reasons.append((0, f"about {co['headcount']:,} people" if co["headcount"] else "headcount not known yet"))

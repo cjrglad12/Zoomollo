@@ -48,6 +48,8 @@ ROLES_MACRO = """{% macro roleslist(roles, show=5) %}{% if roles %}{% set total 
 <div style="margin-left:8px;font-size:14px">• {% if j.url %}<a href="{{ j.url }}" target="_blank" rel="noopener">{% endif %}{% if j.fit %}<b>{{ j.title }}</b>{% else %}{{ j.title }}{% endif %}{% if j.url %}</a>{% endif %}{% if j.n > 1 %} ×{{ j.n }}{% endif %}
 {%- if j.location %} <span class="muted">· {{ j.location }}</span>{% endif %}{% if j.age %} <span class="muted">· {{ j.age }}</span>{% endif %}</div>
 {% if loop.last and loop.length > show %}</details>{% endif %}{% endfor %}</div>{% endif %}{% endmacro %}"""
+LOXO_MACRO = """{% macro loxobtn(p) %}{% if p and loxo_on %}<form class="fb" method="post" target="_blank" action="{{ url_for('person_loxo', pid=p.id) }}" style="display:inline">
+<button class="ghost" style="background:transparent;color:var(--accent);border:1px solid var(--line);padding:3px 10px;font-size:13px" title="Adds them to Loxo as a Contact and opens their LinkedIn profile: click the Loxo extension there to find their email and phone. Zoomollo copies in whatever Loxo finds.">{{ 'In Loxo · find contact info' if p.loxo_person_id else 'Add to Loxo & find contact info' }}</button></form>{% endif %}{% endmacro %}"""
 OL_MACRO = """{% macro olbadge(st) %}{% if st and st.level %}<span class="chip ol-{{ st.level }}" title="{{ st.reason }}">{{ {'blocked': '⛔ Off-limits', 'warn': 'Past client', 'info': 'In Loxo'}[st.level] }}</span>{% endif %}{% endmacro %}"""
 
 PAGE = """<!doctype html>
@@ -582,7 +584,7 @@ If it didn't open, <a href="{{ mailto }}">open it again</a>.</div>
 <a class="btn" href="{{ url_for('today_page') }}">No, not yet</a></form></div>
 <script>window.location.href = {{ mailto|tojson }};</script>"""
 
-TODAY = PHONE_MACRO + ROLES_MACRO + """<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><h2>Today</h2>
+TODAY = PHONE_MACRO + ROLES_MACRO + LOXO_MACRO + """<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><h2>Today</h2>
 <a class="btn" href="{{ url_for('blitz_page') }}" style="margin-left:auto" title="Work a call list one card at a time, with keyboard shortcuts">▶ Start call blitz</a></div>
 <div class="sub"><span id="zm-left">{{ rows|length }} account{{ 's' if rows|length != 1 }} to call</span> · {{ due|length }} follow-up{{ 's' if due|length != 1 }} due · {{ done|length }} logged today
 {% if not desk_set %} · <a href="{{ url_for('companies') }}">set your desk</a> so this list knows which roles you place{% endif %}</div>
@@ -619,6 +621,7 @@ TODAY = PHONE_MACRO + ROLES_MACRO + """<div style="display:flex;gap:12px;align-i
 {% if not r.main_line and not (r.person and r.person.phone) %}<span class="muted">📞 no phone found</span>{% endif %}
 {% if r.person and r.person.email %}✉ <a href="mailto:{{ r.person.email }}">{{ r.person.email }}</a>{% if r.person.email_status == 'guessed' %} <span class="muted">(guessed)</span>{% endif %}{% endif %}
 {% if r.person %} · <a href="{{ r.person.linkedin_url or li_search(r.person.name, r.company) }}" target="_blank" rel="noopener">LinkedIn</a>{% endif %}</div>
+{% if r.person and (not r.person.email or r.person.email_status == 'guessed' or not r.person.phone) %}<div style="margin-top:4px">{{ loxobtn(r.person) }}</div>{% endif %}
 {% set num = (r.person.phone if r.person and r.person.phone else r.main_line) %}{% if num %}<a class="btn callbtn" href="tel:{{ num }}">📞 Call {{ num|phone }}</a>
 <div class="muted zm-linekind">{{ 'direct line' if r.person and r.person.phone else 'main line' }}{% if num|linenote %} · <b>{{ num|linenote }}</b>{% endif %}</div>{% endif %}
 <div style="margin-top:8px"><span class="muted">Why now:</span> {{ r.why_now|join(' · ') }}</div>
@@ -746,7 +749,7 @@ BLITZ_BUILD = """<h2>Call blitz</h2>
 <script>function zmSrc(){var c=document.querySelector('input[name=source]:checked').value==='custom';
 document.getElementById('zm-custom').style.opacity=c?1:.45;document.querySelectorAll('#zm-custom select,#zm-custom input').forEach(function(e){e.disabled=!c});}zmSrc();</script>"""
 
-BLITZ_RUN = PHONE_MACRO + ROLES_MACRO + """<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+BLITZ_RUN = PHONE_MACRO + ROLES_MACRO + LOXO_MACRO + """<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
 <h2 style="margin:0">Blitz: {{ s.name }}</h2>
 <span class="chip">card {{ s.i + 1 }} of {{ s['items']|length }}</span>
 <span style="font-size:14px"><b>{{ t.dials }}</b> dial{{ 's' if t.dials != 1 }} · <b>{{ t.conversations }}</b> conversation{{ 's' if t.conversations != 1 }} · <b>{{ t.voicemail }}</b> voicemail{{ 's' if t.voicemail != 1 }} · <b>{{ t.meeting }}</b> meeting{{ 's' if t.meeting != 1 }}{% if t.meeting %} 🎉{% endif %} · <span id="zm-clock" class="muted" data-start="{{ s.started }}"></span></span>
@@ -762,7 +765,8 @@ BLITZ_RUN = PHONE_MACRO + ROLES_MACRO + """<div style="display:flex;gap:10px;ali
 {% if c.score %}<span class="chip">score {{ c.score }}</span>{% endif %}{% if c.stage %} <span class="chip">{{ c.stage }}</span>{% endif %}</div>
 {{ cosummary(c.about) }}
 {% if c.person %}<div style="margin-top:6px;font-size:17px"><b>{{ c.person.name }}</b> · {{ c.person.title or '' }} <span class="muted" style="font-size:13px">({{ c.why_person }})</span>
-· <a href="{{ c.person.linkedin_url or li_search(c.person.name, c.company) }}" target="_blank" rel="noopener" style="font-size:13px">LinkedIn</a></div>
+· <a href="{{ c.person.linkedin_url or li_search(c.person.name, c.company) }}" target="_blank" rel="noopener" style="font-size:13px">LinkedIn</a>
+{% if not c.person.email or c.person.email_status == 'guessed' or not c.person.phone %} {{ loxobtn(c.person) }}{% endif %}</div>
 {% elif c.lead %}<div style="margin-top:6px;font-size:16px">Front desk · ask for <b>{{ c.lead_label }}</b>
 <span class="muted" style="font-size:13px">(last name hidden)</span><div style="margin-top:4px;font-size:14px">{% set left = apollo_left() %}{% if left is not none and not c.lead.enriched_at %}<form class="fb" method="post" action="{{ url_for('lead_enrich', lid=c.lead.id) }}" style="display:inline">
 <button class="ghost" {{ 'disabled' if not left }} title="Uses one free Apollo credit; personal emails and phones are never requested">Get full name &amp; email</button></form>
@@ -1694,6 +1698,22 @@ def create_app(db_path: str | None = None) -> Flask:
     if os.environ.get("ZOOMOLLO_NO_BACKGROUND") != "1":
         threading.Thread(target=candidate_timer, daemon=True).start()
 
+    def loxo_contact_timer():
+        """Every half hour: read back contact info Loxo found, and add today's best prospects to Loxo."""
+        import time
+        from . import loxo, loxoenrich
+        time.sleep(120)
+        while True:
+            if loxo.configured():
+                try:
+                    loxoenrich.auto(DB(db_path), progress=log.appendleft)
+                except Exception as e:  # noqa: BLE001
+                    log.appendleft(f"Loxo contact info skipped: {e}")
+            time.sleep(1800)
+
+    if os.environ.get("ZOOMOLLO_NO_BACKGROUND") != "1":
+        threading.Thread(target=loxo_contact_timer, daemon=True).start()
+
     def apollo_timer():
         """A few Apollo lookups a day for the best accounts, inside the free monthly credits."""
         import time
@@ -1800,8 +1820,8 @@ def create_app(db_path: str | None = None) -> Flask:
         def apollo_left():
             return _ap.credits_left(db) if _ap.configured() else None
         body = render_template_string(tpl, depts=DEPT_LABELS, levels=LEVEL_LABELS, li_search=linkedin_search_url,
-                                      apollo_left=apollo_left,
-                                      dict=dict, ol=ol, cophone=cophone, pitch_for=pitch_for, desk_fit=desk_fit, **ctx)
+                                      apollo_left=apollo_left, **({"loxo_on": __import__("zoomollo.loxo", fromlist=["configured"]).configured()} | ctx),
+                                      dict=dict, ol=ol, cophone=cophone, pitch_for=pitch_for, desk_fit=desk_fit)
         from .hiringscore import load_desk
         setup = []  # what's still missing before Zoomollo works properly for your desk
         if not load_desk(db).is_set:
@@ -2781,6 +2801,25 @@ def create_app(db_path: str | None = None) -> Flask:
         r = _leads.enrich(DB(db_path), lid)
         log.appendleft(("✓ Apollo: " if r["ok"] else "Apollo: ") + r["msg"])
         return redirect(request.referrer or url_for("today_page"))
+
+    @app.post("/person/<int:pid>/loxo")
+    def person_loxo(pid: int):
+        """Add to Loxo, copy in anything Loxo already has, then open LinkedIn for the extension."""
+        from . import loxoenrich
+        from .orgmap import linkedin_search_url
+        db = DB(db_path)
+        p = db.conn.execute("SELECT p.*, co.name AS company_name, co.key AS company_key FROM people p "
+                            "JOIN companies co ON co.id = p.company_id WHERE p.id = ?", (pid,)).fetchone()
+        if not p:
+            return redirect(url_for("today_page"))
+        try:
+            lid, how = loxoenrich.add(db, pid)
+            got = loxoenrich.pull(db, pid) if lid else {}
+            log.appendleft(f"✓ Loxo: {p['name']} {how}" + (f"; already had {', '.join(got.values())}" if got else "")
+                           if lid else f"Loxo: {p['name']} not added ({how})")
+        except Exception as e:  # noqa: BLE001
+            log.appendleft(f"✗ Loxo: couldn't add {p['name']}: {e}")
+        return redirect(p["linkedin_url"] or linkedin_search_url(p["name"], p["company_name"] or p["company_key"]))
 
     @app.post("/company/<int:cid>/leads")
     def company_leads(cid: int):
