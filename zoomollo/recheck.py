@@ -12,7 +12,7 @@ The first look at a company is the baseline: nothing is reported for it.
 from __future__ import annotations
 
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from .db import DB
 
@@ -44,9 +44,13 @@ def due(db: DB, limit: int = 20, days: int | None = None) -> list:
     from .hiringscore import score_all
     days = every_days() if days is None else days
     cutoff = (date.today() - timedelta(days=days)).isoformat()
+    # A site that failed to load is not due again until its backoff ends, so the same
+    # failures don't use up every hourly slot.
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     rows = db.conn.execute(
         "SELECT co.*, (SELECT 1 FROM pipeline pl WHERE pl.company_id = co.id) AS in_pipeline FROM companies co "
-        "WHERE co.domain IS NOT NULL AND (co.last_checked IS NULL OR co.last_checked < ?)", (cutoff,)).fetchall()
+        "WHERE co.domain IS NOT NULL AND (co.last_checked IS NULL OR co.last_checked < ?) "
+        "AND (co.crawl_backoff_until IS NULL OR co.crawl_backoff_until <= ?)", (cutoff, now_iso)).fetchall()
     if not rows:
         return []
     scores = score_all(db)
@@ -66,12 +70,15 @@ def run(db: DB, limit: int | None = None, days: int | None = None, pages: int = 
         try:
             r = crawl_company(db, co["domain"], max_pages=pages, delay=delay)
         except Exception as e:  # noqa: BLE001 - one bad site shouldn't stop the run
+            from .pipeline import note_crawl_result
+            note_crawl_result(db, co["id"], False)
             say(f"✗ {co['name'] or co['domain']}: {e}")
             continue
         if r.get("blocked"):
             continue
-        if not r["pages"]:  # site didn't load: try again on the next round, not next week
-            say(f"✗ {co['name'] or co['domain']}: site didn't load")
+        if not r["pages"]:  # recorded with a backoff inside crawl_company, so it won't be due again this hour
+            why = "timed out" if r.get("gave_up") else "site didn't load"
+            say(f"✗ {co['name'] or co['domain']}: {why}, backed off")
             continue
         checked += 1
     counts = dict.fromkeys(KINDS, 0)

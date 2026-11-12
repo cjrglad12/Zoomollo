@@ -155,6 +155,12 @@ def main(argv: list[str] | None = None) -> int:
     lp.add_argument("--hiring", action="store_true", help="Only likely hiring managers")
     lp.add_argument("--limit", type=int, default=100)
 
+    lc = sub.add_parser("loxo-channels",
+                        help="Add new emails and phones onto people already in Loxo (dry run unless --send)")
+    lc.add_argument("--send", action="store_true")
+    lc.add_argument("--person", type=int, help="Only this Zoomollo person id")
+    lc.add_argument("--limit", type=int, default=100)
+
     sv = sub.add_parser("serve", help="Run the web UI")
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8080)
@@ -425,6 +431,11 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(p))
         print(f"{'Pushed' if a.send else 'Would push'} {len(sent)} people.")
 
+    elif a.cmd == "loxo-channels":
+        from .loxoenrich import push_linked
+        result = push_linked(db, dry_run=not a.send, person_id=a.person, limit=a.limit)
+        print(json.dumps(result, indent=2))
+
     elif a.cmd == "serve":
         from .web import create_app
         url = f"http://{'127.0.0.1' if a.host in ('0.0.0.0', '127.0.0.1') else a.host}:{a.port}"
@@ -437,7 +448,9 @@ def main(argv: list[str] | None = None) -> int:
         import flask.cli
         logging.getLogger("werkzeug").setLevel(logging.ERROR)  # quiet per-request logs
         flask.cli.show_server_banner = lambda *args, **kw: None
-        create_app(db.path).run(host=a.host, port=a.port)
+        # Threaded so one slow page request can't stop the rest of the UI.
+        # Crawls themselves run on a background thread and give up on a timer.
+        create_app(db.path).run(host=a.host, port=a.port, threaded=True)
 
     return 0
 

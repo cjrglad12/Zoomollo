@@ -117,6 +117,45 @@ def guess_emails(full_name: str, domain: str, known_pattern: str | None = None) 
     return [e for e, _ in candidates(full_name, domain, [known_pattern] if known_pattern else None)]
 
 
+def _first_forms(first: str) -> set[str]:
+    """The first name plus the nicknames we already use for guessing (Bill ~ William)."""
+    forms = {first} | set(NICKNAMES.get(first, []))
+    return {f for f in forms if f}
+
+
+def email_matches_name(email: str, name: str) -> bool:
+    """True when the mailbox looks like this person's name (bsmiley ~ Bill Smiley, not Zach Miller)."""
+    if not email or "@" not in email or not name:
+        return False
+    local = re.sub(r"[^a-z0-9]", "", email.split("@", 1)[0].lower())
+    split = split_name(name)
+    if not split or not local:
+        return False
+    first, last = split
+    for form in _first_forms(first):
+        for pattern in PATTERNS:
+            if re.sub(r"[^a-z0-9]", "", render(pattern, form, last)) == local:
+                return True
+    if len(last) >= 3 and last in local:
+        for form in _first_forms(first):
+            if form in local or (form[:1] and (local.startswith(form[:1]) or form[:1] + last in local)):
+                return True
+    return False
+
+
+def same_person(a: str | None, b: str | None) -> bool:
+    """Same human, not two people who happen to share an email or a phone.
+    Middle names are ignored. Bill and William match; Zach Miller and Bill Smiley do not."""
+    if not (a and b):
+        return False
+    sa, sb = split_name(a), split_name(b)
+    if sa and sb:
+        return sb[0] in _first_forms(sa[0]) and sa[1] == sb[1]
+    norm = lambda s: re.sub(r"[^a-z]", "", s.lower())  # noqa: E731
+    left, right = norm(a), norm(b)
+    return bool(left) and left == right
+
+
 @lru_cache(maxsize=2048)
 def has_mx(domain: str) -> bool | None:
     """True/False if DNS answers, None if the lookup itself failed."""

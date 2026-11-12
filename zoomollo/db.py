@@ -278,6 +278,16 @@ CREATE TABLE IF NOT EXISTS blocked_companies (  -- staffing / recruiting firms: 
 );
 CREATE INDEX IF NOT EXISTS contacts_company ON contacts(company_id);
 CREATE INDEX IF NOT EXISTS jobs_company ON jobs(company_id);
+CREATE TABLE IF NOT EXISTS task_queue (       -- crawls and imports waiting to run (survives a restart)
+    id INTEGER PRIMARY KEY,
+    action TEXT NOT NULL,                      -- crawl | addco | directory | jobs | prospect
+    item TEXT NOT NULL,                        -- domain, board, or "what in where"
+    opts TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'pending',    -- pending | running | done | failed
+    created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS task_queue_active ON task_queue(action, item)
+    WHERE status IN ('pending', 'running');
 """
 
 
@@ -305,7 +315,9 @@ MIGRATIONS = {
                   "summary": "TEXT",                   # one tight line: what the company does
                   "summary_source": "TEXT",            # website | you
                   "headcount": "INTEGER",           # total employees, when known
-                  "headcount_source": "TEXT"},      # website | apollo | you
+                  "headcount_source": "TEXT",       # website | apollo | you
+                  "crawl_failures": "INTEGER NOT NULL DEFAULT 0",  # site didn't load, in a row
+                  "crawl_backoff_until": "TEXT"},   # don't retry a failed site before this
     "jobs": {"department": "TEXT", "description": "TEXT",
              "last_seen": "TEXT",                  # last time the role was still listed
              "salary_max": "INTEGER",              # yearly, parsed from the post when stated
@@ -321,7 +333,8 @@ MIGRATIONS = {
                "tried_emails": "TEXT",              # JSON list of addresses that bounced
                "loxo_person_id": "INTEGER",         # this contact's record in Loxo, once matched or created
                "loxo_added_at": "TEXT",             # added / linked to Loxo for contact info (loxoenrich)
-               "loxo_pulled_at": "TEXT"},           # last read back from Loxo
+               "loxo_pulled_at": "TEXT",            # last read back from Loxo
+               "review_note": "TEXT"},              # shared email/phone or a Loxo link we refused
 }
 
 
@@ -339,7 +352,7 @@ class DB:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.execute("PRAGMA synchronous=NORMAL")  # safe with WAL, and much less waiting on the disk
-        if self.path in _READY and self.conn.execute("PRAGMA user_version").fetchone()[0] >= 7:  # tables and repairs were already checked by this program: opening is instant
+        if self.path in _READY and self.conn.execute("PRAGMA user_version").fetchone()[0] >= 8:  # tables and repairs were already checked by this program: opening is instant
             return
         self._setup()
         if self.path != ":memory:":
@@ -406,6 +419,12 @@ class DB:
                 if self.conn.execute("PRAGMA user_version").fetchone()[0] < 7:
                     self.purge_support()
                     self.conn.execute("PRAGMA user_version = 7")
+                    self.conn.commit()
+        if self.conn.execute("PRAGMA user_version").fetchone()[0] < 8:
+            with _SETUP_LOCK:
+                if self.conn.execute("PRAGMA user_version").fetchone()[0] < 8:
+                    self.fix_shared_personal_emails()
+                    self.conn.execute("PRAGMA user_version = 8")
                     self.conn.commit()
 
     # --- exclusions (see exclusions.py) ----------------------------------------
@@ -620,6 +639,13 @@ class DB:
                 if row["email"]:
                     self.conn.execute("DELETE FROM contacts WHERE value = ?", (row["email"],))
             return None
+        review = None
+        status = fields.get("email_status") or ("found" if email else None)
+        if email and status in ("found", "confirmed"):
+            email, review = self._claim_found_email(company_id, name, key, email)
+            if email is None:
+                fields.pop("email", None)
+                fields.pop("email_status", None)
         if row is None:
             level = seniority(title)
             co = self.company_row(company_id)
@@ -633,6 +659,7 @@ class DB:
             if co and co["last_checked"] and level in ("c_level", "vp", "director", "manager") and title:
                 self.add_event(company_id, "person_new", f"New on their team: {name}, {title}",
                                person_id=cur.lastrowid)
+            self._set_review(cur.lastrowid, review)
             return cur.lastrowid
         upd = {}
         if title and not row["title"]:
@@ -647,7 +674,74 @@ class DB:
         if upd:
             cols = ", ".join(f"{k} = ?" for k in upd)
             self.conn.execute(f"UPDATE people SET {cols} WHERE id = ?", (*upd.values(), row["id"]))
+        self._set_review(row["id"], review)
         return row["id"]
+
+    def _set_review(self, person_id: int | None, note: str | None) -> None:
+        if person_id and note:
+            self.conn.execute("UPDATE people SET review_note = ? WHERE id = ?", (note[:300], person_id))
+
+    def _claim_found_email(self, company_id: int, name: str, name_key: str, email: str) -> tuple[str | None, str | None]:
+        """A personal email found on a site belongs to one person. Returns (email or None, review note).
+
+        bsmiley@ stays with Bill Smiley. It is not also stored on Zach Miller, and if Zach
+        already has it the address moves to Bill. Two people who both match (Ann Smith and
+        Adam Smith, asmith@) are flagged and the address is not copied onto the second.
+        """
+        from .patterns import email_matches_name
+        email = email.lower().strip()
+        me_matches = email_matches_name(email, name)
+        holders = self.conn.execute(
+            "SELECT id, name FROM people WHERE company_id = ? AND name_key != ? AND lower(email) = ?",
+            (company_id, name_key, email)).fetchall()
+        if holders:
+            holder = holders[0]
+            holder_matches = email_matches_name(email, holder["name"])
+            if me_matches and not holder_matches:
+                note = f"Shared email {email} kept for {name}; removed from {holder['name']}"
+                self.conn.execute(
+                    "UPDATE people SET email = NULL, email_status = NULL, review_note = ? WHERE id = ?",
+                    (note[:300], holder["id"]))
+                return email, note
+            note = f"Shared email {email} already on {holder['name']}; not also stored on {name}"
+            self._set_review(holder["id"], note)
+            return None, note
+        if not me_matches:
+            better = self.conn.execute(
+                "SELECT id, name FROM people WHERE company_id = ? AND name_key != ?",
+                (company_id, name_key)).fetchall()
+            better = [p for p in better if email_matches_name(email, p["name"])]
+            if better:
+                note = f"Shared email {email} looks like {better[0]['name']}, not {name}"
+                self._set_review(better[0]["id"],
+                                 f"Shared email {email} also appeared with {name}; not stored on both")
+                return None, note
+        return email, None
+
+    def fix_shared_personal_emails(self) -> int:
+        """One-time repair: a found/confirmed personal email stored on two people at one company."""
+        from .patterns import email_matches_name
+        changed = 0
+        groups = self.conn.execute(
+            "SELECT company_id, lower(email) AS email FROM people "
+            "WHERE email IS NOT NULL AND COALESCE(email_status, '') IN ('found', 'confirmed') "
+            "GROUP BY company_id, lower(email) HAVING COUNT(*) > 1").fetchall()
+        for company_id, email in groups:
+            people = list(self.conn.execute(
+                "SELECT id, name FROM people WHERE company_id = ? AND lower(email) = ? ORDER BY id",
+                (company_id, email)))
+            matches = [p for p in people if email_matches_name(email, p["name"])]
+            keep = matches[0]["id"] if len(matches) == 1 else (None if len(matches) > 1 else people[0]["id"])
+            for person in people:
+                if keep is not None and person["id"] == keep:
+                    self._set_review(person["id"], f"Shared email {email} kept here; it was also on someone else")
+                    continue
+                self.conn.execute(
+                    "UPDATE people SET email = NULL, email_status = NULL, review_note = ? WHERE id = ?",
+                    (f"Shared email {email} removed; it was on more than one person"[:300], person["id"]))
+                changed += 1
+        self.conn.commit()
+        return changed
 
     def people(self, company_id: int | None = None, q: str = "", department: str | None = None,
                hiring_only: bool = False, limit: int = 1000) -> list[sqlite3.Row]:

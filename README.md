@@ -40,6 +40,7 @@ zoomollo due                                # follow-ups and next steps due toda
 zoomollo send-due                           # send due follow-up emails from your mailbox
 zoomollo inbox                              # check your inbox for replies / bounces now
 zoomollo loxo-push                          # dry run; add --send to push for real
+zoomollo loxo-channels                      # dry run; add --send to add missing emails and phones
 ```
 
 ## How a prospect run finds companies
@@ -120,7 +121,7 @@ A role only counts while it's still listed (seen in the last 30 days, and not cl
 
 ## This week: what changed
 
-While Zoomollo is open it re-checks each company's website and job boards every 7 days (`RECHECK_DAYS`), up to 20 companies an hour (`RECHECK_PER_HOUR`), pipeline companies and high scorers first. The **This week** tab shows what changed in the last 7–90 days, best accounts first, with *Only my niche* and *Only my pipeline* filters:
+While Zoomollo is open it re-checks each company's website and job boards every 7 days (`RECHECK_DAYS`), up to 20 companies an hour (`RECHECK_PER_HOUR`), pipeline companies and high scorers first. One page request gives up after `CRAWL_TIMEOUT` seconds (default 15) and one company after `CRAWL_BUDGET_SECONDS` (default 180), so a site that hangs is abandoned, marked failed, and skipped for 6 hours (then 12, 24, and so on, up to a week) instead of being tried again every hour. Crawls run in the background; the web page keeps responding. Crawl requests you queue (a prospect search, an import, or a list of sites) are saved in the database and continue after a restart, without queueing the same site twice. The **This week** tab shows what changed in the last 7–90 days, best accounts first, with *Only my niche* and *Only my pipeline* filters:
 
 | Change | What it means |
 |---|---|
@@ -129,7 +130,7 @@ While Zoomollo is open it re-checks each company's website and job boards every 
 | **New leader** | a manager or more senior person appeared on their site; new managers often build their team (+5) |
 | **Role closed or filled** | missing two checks in a row; ask who filled it, or whether it's on hold |
 
-The first look at a company is the baseline, so a new prospect run doesn't flood the list. A site that doesn't load never closes roles. Changes at companies in your pipeline also go into their timeline and a list on the Pipeline tab. Command line: `zoomollo recheck`, `zoomollo changes --days 7`.
+The first look at a company is the baseline, so a new prospect run doesn't flood the list. A site that doesn't load never closes roles; it is marked failed and backed off so the next hour is spent on companies that can be read. Changes at companies in your pipeline also go into their timeline and a list on the Pipeline tab. Command line: `zoomollo recheck`, `zoomollo changes --days 7`.
 
 ## Apollo (optional, free credits only)
 
@@ -246,6 +247,7 @@ Loxo finds emails and phone numbers (its Chrome extension on a LinkedIn profile,
 - **Add to Loxo & find contact info** (on Today and blitz cards when the person is missing an email or a direct line) adds them to Loxo as a Contact, copies in anything Loxo already has, and opens their LinkedIn profile in a new tab: click the Loxo extension there to find their details.
 - **Automatically:** every half hour Zoomollo adds people from your best Today cards who are missing details to Loxo: the person on the card first, then up to two colleagues who could also own the hire (others tied to the role, that team's leaders, HR / talent leaders, executives). Loxo does not charge per contact, so every matching person is added. Set `LOXO_AUTO_ADD=0` to turn automatic adds off (a leftover `15`, or any other number, is ignored). If Loxo rate-limits the API, Zoomollo waits for a numeric `Retry-After` header or backs off, then picks up the rest on the next run. It reads back the people it added over the last three weeks.
 - **Every number and email Loxo has is kept**, labelled (mobile, work, direct, personal...), and shown on the card so you can pick: a mobile or direct line becomes the main number, a work email at the company's domain the main email. Generic inboxes, toll-free and customer service numbers are never taken.
+- **Push new contact info** (the button on a person already in Loxo, or `zoomollo loxo-channels`, add `--send` to do it) adds emails and phones Zoomollo found that are missing on that Loxo record. It only adds. It does not change or delete anything already in Loxo, and running it again adds nothing. Guesses are not sent. If Loxo rate-limits the call, Zoomollo waits for `Retry-After` or backs off, same as the other Loxo calls. `LOXO_AUTO_ADD=0` still turns off automatic adds of new people; this push is separate and only fills in channels on people already linked.
 - **Other contacts at the company** fold out under each card ("2 other contacts at Acme"), each with their numbers, emails, LinkedIn and their own Loxo button.
 
 ## What it doesn't do (on purpose)

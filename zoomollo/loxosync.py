@@ -118,6 +118,27 @@ def _emails(p: dict) -> set[str]:
     return {e for e in out if e}
 
 
+def _hit_phones(hit: dict) -> set[str]:
+    from .extract import normalize_phone
+    raws = list(hit.get("phones") or [])
+    if hit.get("phone"):
+        raws.append(hit.get("phone"))
+    out = set()
+    for raw in raws:
+        if isinstance(raw, dict):
+            raw = raw.get("value")
+        ph = normalize_phone(str(raw)) if raw else None
+        if ph:
+            out.add(ph)
+    return out
+
+
+def _same_phone(hit: dict, phone: str | None) -> bool:
+    from .extract import normalize_phone
+    want = normalize_phone(phone) if phone else None
+    return bool(want and want in _hit_phones(hit))
+
+
 def _companies(p: dict) -> set[str]:
     names = {p.get("current_company"), p.get("company")}
     for jp in p.get("job_profiles") or []:
@@ -180,14 +201,29 @@ class Sync:
             return None, "contact no longer in Zoomollo"
         if p["loxo_person_id"]:
             return p["loxo_person_id"], "linked"
+        from .patterns import email_matches_name, same_person
         email = (p["email"] or "").lower() if p["email_status"] in ("found", "confirmed") else ""
         company = _norm(p["company_name"])
         found = None
+        conflict = None  # a Loxo person who shares an email or phone but is somebody else
         if email:
             for hit in _people(self.client.get("people", query=_quote(email), per_page=10)):
-                if email in _emails(hit):
+                if email not in _emails(hit):
+                    if _same_phone(hit, p["phone"]) and not same_person(hit.get("name"), p["name"]):
+                        conflict = conflict or hit
+                    continue
+                if same_person(hit.get("name"), p["name"]):
                     found = hit["id"]
                     break
+                conflict = hit
+        if not found and p["phone"]:
+            for hit in _people(self.client.get("people", query=_quote(p["phone"]), per_page=10)):
+                if not _same_phone(hit, p["phone"]):
+                    continue
+                if same_person(hit.get("name"), p["name"]):
+                    found = hit["id"]
+                    break
+                conflict = conflict or hit
         if not found:
             for hit in _people(self.client.get("people", query=_quote(p["name"]), per_page=25)):
                 if (hit.get("name") or "").strip().lower() != p["name"].strip().lower():
@@ -200,11 +236,33 @@ class Sync:
                     found = hit["id"]
                     break
         how = "matched"
+        if found:
+            other = self.db.conn.execute(
+                "SELECT name FROM people WHERE loxo_person_id = ? AND id != ?", (found, person_id)).fetchone()
+            if other and not same_person(other["name"], p["name"]):
+                self._flag(person_id, f"Not linked to Loxo #{found} ({other['name']}): "
+                            f"{p['name']} is a different person sharing a contact")
+                return None, "flagged: different people share a contact"
+        if conflict and not found:
+            cname = conflict.get("name") or "someone else"
+            self._flag(person_id, f"Not linked to Loxo #{conflict.get('id')} ({cname}): "
+                        f"different name, shared email or phone")
         if not found:
             if not create_contacts(self.db):
+                if conflict:
+                    return None, "flagged: different name, shared email or phone"
                 return None, "not in Loxo (creating contacts is turned off)"
+            send_email, send_phone = email, p["phone"]
+            # Don't copy a channel that belongs to a different person onto a new Loxo record.
+            if conflict:
+                if send_email and send_email in _emails(conflict):
+                    send_email = ""
+                if send_phone and _same_phone(conflict, send_phone):
+                    send_phone = ""
+            if send_email and not email_matches_name(send_email, p["name"]):
+                send_email = ""
             person = {"name": p["name"]}
-            for k, v in (("email", email), ("phone", p["phone"]), ("title", p["title"]),
+            for k, v in (("email", send_email), ("phone", send_phone), ("title", p["title"]),
                          ("company", p["company_name"]), ("linkedin_url", p["linkedin_url"])):
                 if v:
                     person[k] = v
@@ -220,6 +278,10 @@ class Sync:
         self.db.conn.execute("UPDATE people SET loxo_person_id = ?, pushed_to_loxo = 1 WHERE id = ?", (found, person_id))
         self.db.commit()
         return found, how
+
+    def _flag(self, person_id: int, note: str) -> None:
+        self.db.conn.execute("UPDATE people SET review_note = ? WHERE id = ?", (note[:300], person_id))
+        self.db.commit()
 
     def send(self, row) -> tuple[str, str]:
         """(status, detail) for one outbox row."""

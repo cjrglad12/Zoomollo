@@ -7,12 +7,13 @@ import html
 import io
 import logging
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 from urllib.parse import urljoin, urlparse
 
 import requests
 
-from .crawler import Crawler, normalize_domain
+from .crawler import Crawler, crawl_budget, crawl_timeout, normalize_domain
 from .db import DB, now, now_precise
 from .exclusions import is_staffing_domain, is_support_title, staffing_signal
 from .extract import (_GENERIC_NAME, _domain_match, best_company_name, is_role_email, looks_like_name,
@@ -88,9 +89,27 @@ def quoted_outsider(name: str, page_text: str, company: str | None, domain: str 
     return bool(org) and not (org & own) and not any(o in (domain or "") for o in org)
 
 
+def note_crawl_result(db: DB, company_id: int | None, ok: bool) -> None:
+    """A site that loaded is due again in RECHECK_DAYS. A site that didn't is backed off
+    (6 hours, then 12, 24, … up to a week) so it stops using the hourly recheck budget."""
+    if not company_id or not db.company_row(company_id):
+        return
+    if ok:
+        db.update_company(company_id, last_crawled=now(), last_checked=now(),
+                          crawl_failures=0, crawl_backoff_until=None)
+    else:
+        row = db.company_row(company_id)
+        n = int(row["crawl_failures"] or 0) + 1
+        hours = min(24 * 7, 6 * (2 ** (n - 1)))
+        until = (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat(timespec="seconds")
+        db.update_company(company_id, crawl_failures=n, crawl_backoff_until=until)
+    db.commit()
+
+
 def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
                   region: str = "US", progress: Progress | None = None,
-                  import_ats: bool = True) -> dict:
+                  import_ats: bool = True, budget: float | None = None,
+                  timeout: float | None = None) -> dict:
     domain = normalize_domain(domain)
     found = {"pages": 0, "emails": 0, "phones": 0, "people": 0, "jobs": 0, "blocked": None, "outlinks": []}
     if db.is_blocked(domain) or is_staffing_domain(domain):
@@ -101,7 +120,9 @@ def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
     # must not wait behind a slow page. Save before every stretch of network reading.
     db.commit()
     run_started = now_precise()
-    crawler = Crawler(max_pages=max_pages, delay=delay, region=region)
+    crawler = Crawler(max_pages=max_pages, delay=delay, region=region,
+                      timeout=crawl_timeout() if timeout is None else timeout,
+                      budget=crawl_budget() if budget is None else budget)
     ats: set[tuple[str, str]] = set()
     name_from: tuple | None = None  # (path depth, site name, title) of the page nearest the homepage
     said_headcount: list[int] = []  # headcounts the site states about itself
@@ -206,9 +227,9 @@ def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
         db.update_company(company_id, name=best_company_name(domain, name_from[1], name_from[2]))
     loaded = {"website"} if found["pages"] else set()  # sources that answered this time
     db.commit()
-    if import_ats and not ats:
+    if import_ats and not crawler._over() and not ats:
         ats |= find_job_boards(crawler, domain)
-    if import_ats:
+    if import_ats and not crawler._over():
         for board, slug in sorted(ats):
             try:
                 found["jobs"] += import_jobs(db, board, slug, domain=domain, mark_checked=False)["jobs"]
@@ -221,8 +242,10 @@ def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
     db.commit()
     guess_people_emails(db, company_id)  # people found on the site get guessed work emails too
     if found["pages"]:
-        db.update_company(company_id, last_crawled=now(), last_checked=now())
-    db.commit()
+        note_crawl_result(db, company_id, True)
+    elif not found.get("blocked"):
+        note_crawl_result(db, company_id, False)
+    found["gave_up"] = bool(getattr(crawler, "gave_up", False)) and not found["pages"]
     assign_hiring_managers(db, company_id)
     try:  # named leaders from Apollo's free people search (only with APOLLO_API_KEY set)
         from .leads import find_for_company
@@ -300,8 +323,13 @@ def learn_pattern(db: DB, company_id: int) -> str | None:
             for pat in PATTERNS:
                 local = render(pat, *split)
                 if local in locals_:
-                    examples.append((p["name"], locals_[local]))
-                    db.add_person(company_id, p["name"], email=locals_[local], email_status="found")
+                    addr = locals_[local]
+                    db.add_person(company_id, p["name"], email=addr, email_status="found")
+                    kept = db.conn.execute(
+                        "SELECT email FROM people WHERE company_id = ? AND name_key = ?",
+                        (company_id, " ".join(p["name"].split()).lower())).fetchone()
+                    if kept and (kept["email"] or "").lower() == addr.lower():
+                        examples.append((p["name"], addr))
                     break
     result = infer_pattern(list(dict.fromkeys(examples)))
     if result:
