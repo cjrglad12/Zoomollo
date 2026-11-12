@@ -325,6 +325,7 @@ def card(db: DB, item: dict, settings: dict) -> dict:
     city = co["city"] if co else None
     ask = td.ask_for(fit)
     from . import leads as _leads
+    from .loxoenrich import channels
     lead = None if person else _leads.best(db, cid, fit, ask)
     if s and fit:
         say = td.opener(s, person["name"] if person else (lead["first_name"] if lead else None), city, settings["my_name"],
@@ -352,6 +353,9 @@ def card(db: DB, item: dict, settings: dict) -> dict:
         "gv": gv_url(phone, settings["gv_account"]) if phone else None,
         "opener": say, "why_now": why, "ask_for": ask, "pitches": pitches,
         "roles": td.open_roles(db, cid, fit),
+        "channels": channels(db, person["id"]) if person else [],
+        "others": [dict(o) | {"channels": channels(db, o["id"])} for o in td.other_people(
+            db.conn.execute("SELECT * FROM people WHERE company_id = ?", (cid,)).fetchall(), person, fit)],
         "lead": lead, "lead_label": _leads.label(lead),
         "stage": STAGE_NAMES.get(stage["stage"]) if stage else None,
         "next_step": stage["next_step"] if stage else None, "last": last,
