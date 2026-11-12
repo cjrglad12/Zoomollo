@@ -372,3 +372,92 @@ def test_push_channels_endpoint_and_cli(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("LOXO_API_KEY", raising=False)
     assert main(["--db", str(tmp_path / "cli.db"), "loxo-channels"]) == 0
     assert "isn't connected" in capsys.readouterr().out
+
+
+def test_shared_crawler_has_no_total_time_limit(monkeypatch):
+    """A directory read or prospect search shares one crawler across many sites; the
+    per-company limit must not cut it off after the first few minutes."""
+    from zoomollo import crawler as cr
+
+    shared, one_company = cr.Crawler(), cr.Crawler(budget=180)
+    shared._ensure_deadline()
+    one_company._ensure_deadline()
+    later = time.monotonic() + 3600
+    monkeypatch.setattr(cr.time, "monotonic", lambda: later)
+    assert not shared._over()
+    assert one_company._over()
+
+
+def test_credentials_after_a_name_are_the_same_person():
+    from zoomollo.patterns import email_matches_name, same_person, split_name
+
+    assert split_name("John Smith, CPA") == ("john", "smith")
+    assert split_name("Jane Doe PE") == ("jane", "doe")
+    assert split_name("Jane Doe, P.E., LEED AP") == ("jane", "doe")
+    assert split_name("Robert Lee Jr") == ("robert", "lee")
+    assert split_name("Mai Pe") == ("mai", "pe")  # a surname, not a credential
+    assert same_person("John Smith, CPA", "John Smith")
+    assert same_person("Jane Doe PE", "Jane Doe")
+    assert same_person("Bill Smiley", "William Smiley")
+    assert not same_person("Zach Miller", "Bill Smiley")
+    assert email_matches_name("jsmith@acme.test", "John Smith, CPA")
+
+
+def test_loxo_record_with_credentials_links_instead_of_duplicating(tmp_path):
+    from zoomollo.loxosync import Sync
+
+    db = DB(str(tmp_path / "c.db"))
+    cid = db.company("acme.test", domain="acme.test", name="Acme")
+    pid = db.add_person(cid, "John Smith", "Tax Partner", email="jsmith@acme.test",
+                        email_status="found", source="website")
+    db.commit()
+    created = []
+
+    class Client:
+        base = "https://loxo.test/api/acme"
+
+        def get(self, endpoint, **params):
+            if endpoint == "person_types":
+                return {"person_types": [{"id": 7, "name": "Contact"}]}
+            if endpoint == "people":
+                return {"people": [{"id": 77, "name": "John Smith, CPA",
+                                    "emails": [{"value": "jsmith@acme.test"}]}]}
+            return {}
+
+        def __init__(self):
+            class S:
+                def post(self, url, json=None, timeout=None):
+                    created.append(json)
+                    raise AssertionError("should link, not create")
+            self.session = S()
+
+    lid, how = Sync(db, Client()).find_or_create(pid)
+    assert lid == 77 and not created
+
+
+def test_loxo_channels_works_through_everyone_across_runs(tmp_path):
+    from zoomollo import loxoenrich
+
+    db = DB(str(tmp_path / "n.db"))
+    cid = db.company("acme.test", domain="acme.test", name="Acme")
+    ids = []
+    for i, name in enumerate(["Ann One", "Ben Two", "Cal Three"]):
+        pid = db.add_person(cid, name, "VP", source="website")
+        db.conn.execute("UPDATE people SET loxo_person_id = ? WHERE id = ?", (100 + i, pid))
+        ids.append(pid)
+    db.commit()
+    seen = []
+
+    class Client:
+        base = "https://loxo.test/api/acme"
+
+        def get(self, endpoint, **params):
+            seen.append(endpoint)
+            return {"person": {"emails": [], "phones": []}}
+
+        session = None
+
+    first = loxoenrich.push_linked(db, client=Client(), dry_run=False, limit=2)
+    second = loxoenrich.push_linked(db, client=Client(), dry_run=False, limit=2)
+    assert first["people"] == 2 and second["people"] == 2
+    assert "people/102" in seen  # the third person was reached on the second run

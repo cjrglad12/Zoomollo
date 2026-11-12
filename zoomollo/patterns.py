@@ -53,9 +53,32 @@ def _slug(s: str) -> str:
     return re.sub(r"[^a-z]", "", s.lower())
 
 
+# Letters after a name ("John Smith, CPA", "Jane Doe PE") and suffixes. Not part of the name.
+CREDENTIALS = {
+    "cpa", "pe", "cfa", "cma", "cia", "cisa", "cissp", "cism", "cfe", "cgma", "cfp", "ea", "mst", "mba", "msa",
+    "phd", "jd", "llm", "esq", "md", "rn", "pmp", "leed", "ap", "bdc", "se", "ra", "aia", "cem", "cpd", "cxa",
+    "fe", "eit", "shrm", "scp", "sphr", "phr", "csm", "cpp", "itil", "ccna", "ccnp", "ccie", "pmi", "acp",
+}
+SUFFIXES = {"jr", "sr", "ii", "iii", "iv"}
+
+
+def _name_parts(s: str) -> list[str]:
+    parts = [p for p in re.split(r"\s+", s.strip()) if p and not p.endswith(".") and _slug(p)]
+    keep = []
+    for i, p in enumerate(parts):
+        slug = _slug(p)
+        if i > 0 and (slug in SUFFIXES or (slug in CREDENTIALS and p.strip(",;").isupper())):
+            continue  # "PE", "CPA", "Jr" after the name; a surname like "Pe" stays
+        keep.append(p)
+    return keep
+
+
 def split_name(full_name: str) -> tuple[str, str] | None:
-    parts = [p for p in re.split(r"\s+", full_name.strip()) if p and not p.endswith(".")]
-    parts = [p for p in parts if _slug(p)]
+    s = re.sub(r"\([^)]*\)", " ", full_name or "")  # "Jane (JJ) Doe"
+    head, comma, _ = s.partition(",")
+    if comma and len(_name_parts(head)) >= 2:
+        s = head  # "John Smith, CPA, CFE" -> "John Smith"
+    parts = _name_parts(s)
     if len(parts) < 2:
         return None
     return _slug(parts[0]), _slug(parts[-1])

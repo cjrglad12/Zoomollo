@@ -226,7 +226,7 @@ class Sync:
                 conflict = conflict or hit
         if not found:
             for hit in _people(self.client.get("people", query=_quote(p["name"]), per_page=25)):
-                if (hit.get("name") or "").strip().lower() != p["name"].strip().lower():
+                if not same_person(hit.get("name"), p["name"]):  # "John Smith, CPA" is John Smith
                     continue
                 cos = _companies(hit)
                 if not (cos and company in cos):

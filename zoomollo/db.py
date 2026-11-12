@@ -334,7 +334,8 @@ MIGRATIONS = {
                "loxo_person_id": "INTEGER",         # this contact's record in Loxo, once matched or created
                "loxo_added_at": "TEXT",             # added / linked to Loxo for contact info (loxoenrich)
                "loxo_pulled_at": "TEXT",            # last read back from Loxo
-               "review_note": "TEXT"},              # shared email/phone or a Loxo link we refused
+               "review_note": "TEXT",               # shared email/phone or a Loxo link we refused
+               "loxo_channels_at": "TEXT"},         # last checked for new emails/phones to add in Loxo
 }
 
 

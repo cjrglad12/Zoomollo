@@ -86,7 +86,10 @@ class Crawler:
         self.max_pages = max_pages
         self.delay = delay
         self.timeout = timeout
-        self.budget = budget  # None: use CRAWL_BUDGET_SECONDS when a crawl starts
+        # Seconds for this crawler's whole life. crawl_company makes one crawler per company and
+        # passes CRAWL_BUDGET_SECONDS. None (a crawler shared by a directory read or a prospect
+        # search, across many sites) has no total limit; each request still has `timeout`.
+        self.budget = budget
         self.region = region
         self.user_agent = user_agent
         self.deadline: float | None = None
@@ -98,8 +101,7 @@ class Crawler:
 
     def _ensure_deadline(self) -> None:
         if self.deadline is None:
-            cap = self.budget if self.budget is not None else crawl_budget()
-            self.deadline = time.monotonic() + cap
+            self.deadline = time.monotonic() + (self.budget if self.budget is not None else float("inf"))
 
     def _over(self) -> bool:
         """True once this company's time budget is spent."""

@@ -297,8 +297,10 @@ def push_linked(db: DB, client=None, dry_run: bool = True, limit: int = 100,
     if person_id:
         ids = [person_id]
     else:
+        # Never-checked people first, then the longest ago, so repeated runs work through everyone.
         ids = [r[0] for r in db.conn.execute(
-            "SELECT id FROM people WHERE loxo_person_id IS NOT NULL ORDER BY id LIMIT ?", (limit,))]
+            "SELECT id FROM people WHERE loxo_person_id IS NOT NULL "
+            "ORDER BY loxo_channels_at IS NOT NULL, loxo_channels_at, id LIMIT ?", (limit,))]
     for pid in ids:
         out["people"] += 1
         try:
@@ -309,6 +311,10 @@ def push_linked(db: DB, client=None, dry_run: bool = True, limit: int = 100,
                 break
             out["details"].append({"id": pid, "error": str(exc)[:200]})
             continue
+        if not dry_run:
+            from .db import now
+            db.conn.execute("UPDATE people SET loxo_channels_at = ? WHERE id = ?", (now(), pid))
+            db.commit()
         got = result.get("would_add") if dry_run else result.get("added")
         out["added"] += len(got or [])
         if got or result.get("reason"):
