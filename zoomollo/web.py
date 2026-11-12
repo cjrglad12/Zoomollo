@@ -1708,7 +1708,10 @@ def create_app(db_path: str | None = None) -> Flask:
         threading.Thread(target=candidate_timer, daemon=True).start()
 
     def loxo_contact_timer():
-        """Every half hour: read back contact info Loxo found, and add today's best prospects to Loxo."""
+        """Every half hour: read back contact info Loxo found, and add prospects who are missing details.
+
+        No daily cap on Loxo adds. Rate limits are handled on the API calls (Retry-After or backoff).
+        """
         import time
         from . import loxo, loxoenrich
         time.sleep(120)

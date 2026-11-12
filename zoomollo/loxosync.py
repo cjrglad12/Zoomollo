@@ -149,7 +149,9 @@ class Sync:
         return self._contact_type or None
 
     def post(self, path: str, payload: dict) -> dict:
-        r = self.client.session.post(f"{self.client.base}/{path}", json=payload, timeout=30)
+        from .loxo import request_with_backoff
+        r = request_with_backoff(
+            lambda: self.client.session.post(f"{self.client.base}/{path}", json=payload, timeout=30))
         if r.status_code in (400, 422):
             raise ValueError(f"Loxo rejected it: {r.text[:300]}")
         r.raise_for_status()

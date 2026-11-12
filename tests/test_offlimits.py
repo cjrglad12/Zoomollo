@@ -133,6 +133,37 @@ def test_loxo_statuses_block_flag_and_email_domains(tmp_path):
     assert m.level == "info"                                           # matched via jo@mailco.io, not gmail
 
 
+def test_loxo_post_honors_retry_after(monkeypatch):
+    import requests
+    c = loxo.LoxoClient(agency_slug="acme", api_key="k")
+    calls, waits = [], []
+
+    class R:
+        def __init__(self, code, retry_after=None):
+            self.status_code = code
+            self.headers = {"Retry-After": retry_after} if retry_after else {}
+            self.content = b'{"person":{"id":1}}'
+            self.text = '{"person":{"id":1}}'
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                err = requests.HTTPError(response=self)
+                err.response = self
+                raise err
+
+        def json(self):
+            return {"person": {"id": 1}}
+
+    def post(url, **kw):
+        calls.append(url)
+        return R(429, "3") if len(calls) == 1 else R(200)
+
+    monkeypatch.setattr(c.session, "post", post)
+    monkeypatch.setattr("time.sleep", lambda s: waits.append(s))
+    assert c.create_person({"person": {"name": "Ada"}}) == {"person": {"id": 1}}
+    assert len(calls) == 2 and waits == [3.0]
+
+
 def test_loxo_get_retries_dropped_connections(monkeypatch):
     import requests
     c = loxo.LoxoClient(agency_slug="acme", api_key="k")

@@ -8,7 +8,10 @@ inside Loxo. Loxo's public API has no "find contact info" call, so Zoomollo:
    hand with **Add to Loxo & find contact info** (which then opens their
    LinkedIn profile, where the extension is one click), and automatically for
    your best Today cards: the person on the card and up to two colleagues who
-   could also own the hire (LOXO_AUTO_ADD people a day, default 15; 0 = off);
+   could also own the hire. Loxo does not charge per contact, so every matching
+   person is added. Set LOXO_AUTO_ADD=0 to turn automatic adds off. A create
+   that hits Loxo's rate limit waits for Retry-After (or backs off); whatever
+   is left waits for the next run;
 2. reads those Loxo records back every half hour and keeps every email and
    phone Loxo has (mobile, work, direct, personal...), labelled, so the card
    offers each of them. Generic inboxes, toll-free and customer service
@@ -18,7 +21,7 @@ inside Loxo. Loxo's public API has no "find contact info" call, so Zoomollo:
 from __future__ import annotations
 
 import os
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 from .db import DB, now
 
@@ -27,11 +30,24 @@ PULL_FOR_DAYS = 21       # stop re-reading a person this long after they were ad
 PER_COMPANY = 3          # people per account added automatically: the card's contact and two more
 
 
-def auto_add_allowance() -> int:
+def auto_add_enabled() -> bool:
+    """Automatic adds run unless LOXO_AUTO_ADD is 0.
+
+    Loxo does not charge per contact, so automatic adds keep going. A number
+    left over from the old cap (the example used to set 15) is ignored.
+    """
+    raw = (os.environ.get("LOXO_AUTO_ADD") or "").strip()
+    if not raw:
+        return True
     try:
-        return max(0, int(os.environ.get("LOXO_AUTO_ADD", "15")))
+        return int(raw) != 0
     except ValueError:
-        return 15
+        return True
+
+
+def _rate_limited(exc: BaseException) -> bool:
+    resp = getattr(exc, "response", None)
+    return getattr(resp, "status_code", None) == 429
 
 
 def needs_info(p) -> bool:
@@ -165,13 +181,12 @@ def pull(db: DB, person_id: int, client=None) -> dict:
     return new
 
 
-def _added_today(db: DB) -> int:
-    return db.conn.execute("SELECT COUNT(*) FROM people WHERE loxo_added_at >= ?",
-                           (date.today().isoformat(),)).fetchone()[0]
-
-
 def auto(db: DB, client=None, progress=None, limit: int | None = None) -> dict:
-    """Read back people added recently, then add today's best prospects who are missing details."""
+    """Read back people added recently, then add the best prospects who are missing details.
+
+    No daily cap. ``limit``, when passed, bounds this one run only (the half-hour
+    job does not pass it). LOXO_AUTO_ADD=0 turns the add half off; read-back still runs.
+    """
     from .today import call_list
     say = progress or (lambda m: None)
     client = _client(client)
@@ -183,6 +198,7 @@ def auto(db: DB, client=None, progress=None, limit: int | None = None) -> dict:
     rows = db.conn.execute("SELECT * FROM people WHERE loxo_person_id IS NOT NULL AND loxo_added_at >= ? "
                            "AND (loxo_pulled_at IS NULL OR loxo_pulled_at < ?) ORDER BY loxo_added_at DESC LIMIT 60",
                            (since, stale)).fetchall()
+    rate_limited = False
     for p in rows:
         if not needs_info(p):
             continue
@@ -190,20 +206,26 @@ def auto(db: DB, client=None, progress=None, limit: int | None = None) -> dict:
             got = pull(db, p["id"], client)
         except Exception as e:  # noqa: BLE001 - one bad record must not stop the rest
             say(f"Loxo read-back for {p['name']} skipped: {e}")
+            if _rate_limited(e):
+                rate_limited = True
+                say("Loxo rate limit reached; remaining contact work waits for the next run")
+                break
             continue
         out["pulled"] += 1
         out["found"] += bool(got)
-    room = auto_add_allowance() - _added_today(db)
-    if limit is not None:
-        room = min(room, limit)
-    if room > 0:
-        # Best cards first: the person on the card, then their next-best colleagues, so each
-        # account ends up with a few ways in.
+    # Best cards first: the person on the card, then their next-best colleagues, so each
+    # account ends up with a few ways in. Everyone still missing details is added.
+    if auto_add_enabled() and not rate_limited and limit != 0:
         cards = call_list(db, limit=40, with_pitches=False)
         wanted = [[r["person"]] + r["others"][:PER_COMPANY - 1] for r in cards if r["person"]]
+        budget = None if limit is None else limit
         for rank in range(PER_COMPANY):
+            if rate_limited or (budget is not None and budget <= 0):
+                break
             for people in wanted:
-                if room <= 0 or rank >= len(people):
+                if budget is not None and budget <= 0:
+                    break
+                if rank >= len(people):
                     continue
                 p = people[rank]
                 full = db.conn.execute("SELECT * FROM people WHERE id = ?", (p["id"],)).fetchone()
@@ -213,10 +235,15 @@ def auto(db: DB, client=None, progress=None, limit: int | None = None) -> dict:
                     lid, how = add(db, p["id"], client)
                 except Exception as e:  # noqa: BLE001
                     say(f"Adding {p['name']} to Loxo skipped: {e}")
+                    if _rate_limited(e):
+                        rate_limited = True
+                        say("Loxo rate limit reached; remaining contact work waits for the next run")
+                        break
                     continue
                 if lid:
                     out["added"] += 1
-                    room -= 1
+                    if budget is not None:
+                        budget -= 1
     if out["added"] or out["found"]:
         say(f"Loxo contact info: {out['added']} added to Loxo, details found for {out['found']}")
     return out
