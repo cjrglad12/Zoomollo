@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 
 import requests
 
@@ -24,6 +25,31 @@ from .db import DB, now
 # (closed, filled, cancelled, lost...) counts as a past job.
 OPEN_STATUS = re.compile(r"active|open|hot|sourcing|interview|offer|on ?hold|hold|pending|new|search", re.I)
 CLOSED_STATUS = re.compile(r"closed|filled|cancel|lost|inactive|archiv|dead|complete|declin", re.I)
+
+# Responses worth retrying. 429 is Loxo's rate limit; the others are transient.
+RETRY_STATUS = (429, 500, 502, 503, 504)
+
+
+def request_with_backoff(call, retries: int = 5):
+    """Run one HTTP call, retrying dropped connections, rate limits and server errors.
+
+    On 429, wait for a numeric Retry-After header when Loxo sends one. Otherwise
+    the wait doubles each try (1s, 2s, 4s...). The last response is returned as-is
+    so the caller can raise.
+    """
+    for attempt in range(retries):
+        try:
+            r = call()
+        except (requests.ConnectionError, requests.Timeout):
+            if attempt == retries - 1:
+                raise
+            time.sleep(2 ** attempt)
+            continue
+        if r.status_code in RETRY_STATUS and attempt < retries - 1:
+            wait = r.headers.get("Retry-After")
+            time.sleep(float(wait) if wait and str(wait).replace(".", "", 1).isdigit() else 2 ** attempt)
+            continue
+        return r
 
 
 class LoxoClient:
@@ -41,21 +67,10 @@ class LoxoClient:
 
     def get(self, endpoint: str, retries: int = 5, **params):
         """GET with retries for dropped connections, rate limits (429) and server errors."""
-        import time
-        for attempt in range(retries):
-            try:
-                r = self.session.get(f"{self.base}/{endpoint}", params=params, timeout=30)
-            except (requests.ConnectionError, requests.Timeout):
-                if attempt == retries - 1:
-                    raise
-                time.sleep(2 ** attempt)
-                continue
-            if r.status_code in (429, 500, 502, 503, 504) and attempt < retries - 1:
-                wait = r.headers.get("Retry-After")
-                time.sleep(float(wait) if wait and wait.replace(".", "", 1).isdigit() else 2 ** attempt)
-                continue
-            r.raise_for_status()
-            return r.json()
+        r = request_with_backoff(
+            lambda: self.session.get(f"{self.base}/{endpoint}", params=params, timeout=30), retries=retries)
+        r.raise_for_status()
+        return r.json()
 
     def scroll(self, endpoint: str, key: str, max_pages: int = 5000):
         """Endpoints paged with scroll_id (companies, placements)."""
@@ -85,7 +100,8 @@ class LoxoClient:
                 return
 
     def create_person(self, payload: dict) -> dict:
-        r = self.session.post(f"{self.base}/people", json=payload, timeout=30)
+        """POST a person. Same rate-limit backoff as GET: Retry-After, then exponential wait."""
+        r = request_with_backoff(lambda: self.session.post(f"{self.base}/people", json=payload, timeout=30))
         r.raise_for_status()
         return r.json()
 

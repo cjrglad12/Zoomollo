@@ -100,7 +100,6 @@ def setup_person(tmp_path):
 
 
 def test_loxo_adds_prospects_and_copies_back_what_it_finds(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOXO_AUTO_ADD", "5")
     db, cid, pid = setup_person(tmp_path)
     loxo = FakeLoxo()
     r = loxoenrich.auto(db, client=loxo)
@@ -119,10 +118,90 @@ def test_loxo_adds_prospects_and_copies_back_what_it_finds(tmp_path, monkeypatch
     assert loxoenrich.auto(db, client=loxo)["added"] == 0                       # never added twice
 
 
-def test_daily_cap_and_off_switch(tmp_path, monkeypatch):
+def test_adding_a_contact_waits_out_a_rate_limit(tmp_path, monkeypatch):
+    waits = []
+    monkeypatch.setattr("time.sleep", lambda s: waits.append(s))
+    db, cid, pid = setup_person(tmp_path)
+    loxo = FakeLoxo()
+    real_post = loxo.session.post
+    calls = []
+
+    def post(url, json=None, timeout=None):
+        calls.append(1)
+        if len(calls) == 1:
+            class Slow:
+                status_code = 429
+                headers = {"Retry-After": "2"}
+                content = b""
+                text = "slow down"
+
+                def raise_for_status(self):
+                    pass
+            return Slow()
+        return real_post(url, json=json, timeout=timeout)
+
+    loxo.session.post = post
+    assert loxoenrich.auto(db, client=loxo)["added"] == 1
+    assert waits == [2.0] and len(calls) == 2
+
+
+def test_auto_add_pauses_when_loxo_keeps_rate_limiting(tmp_path, monkeypatch):
+    import requests
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    db, cid, pid = setup_person(tmp_path)
+    recent = date.today().isoformat()
+    cid2 = db.company("beta.test", domain="beta.test", name="Beta")
+    db.update_company(cid2, city="Dallas, TX", phone="+12145550100", last_crawled=recent)
+    db.add_job(cid2, "website", "2", "Controller", "Dallas, TX", None, recent)
+    db.add_person(cid2, "Lee Example", "CFO")
+    db.commit()
+    loxo = FakeLoxo()
+    posts = []
+
+    class Denied:
+        status_code = 429
+        headers = {}
+        content = b""
+        text = "slow down"
+
+        def raise_for_status(self):
+            err = requests.HTTPError(response=self)
+            err.response = self
+            raise err
+
+    def post(url, json=None, timeout=None):
+        posts.append(url)
+        return Denied()
+
+    loxo.session.post = post
+    assert loxoenrich.auto(db, client=loxo)["added"] == 0
+    assert len(posts) == 5  # retries for the first person, then the run stops
+
+
+def test_auto_add_off_switch(tmp_path, monkeypatch):
     monkeypatch.setenv("LOXO_AUTO_ADD", "0")
     db, cid, pid = setup_person(tmp_path)
     assert loxoenrich.auto(db, client=FakeLoxo())["added"] == 0
+
+
+def test_no_daily_cap_on_loxo_adds(tmp_path, monkeypatch):
+    """A leftover LOXO_AUTO_ADD=15, and people already sent today, must not stop further adds."""
+    monkeypatch.setenv("LOXO_AUTO_ADD", "15")
+    db = DB(str(tmp_path / "many.db"))
+    save_desk(db, "controller")
+    recent = (date.today() - timedelta(days=5)).isoformat()
+    for i in range(15):
+        cid = db.company(f"old{i}.test", domain=f"old{i}.test", name=f"Old {i}")
+        db.add_person(cid, f"Old Person {i}", "CFO")
+        db.conn.execute("UPDATE people SET loxo_added_at = ? WHERE company_id = ?",
+                        (date.today().isoformat() + "T12:00:00+00:00", cid))
+    for i in range(16):
+        cid = db.company(f"co{i}.test", domain=f"co{i}.test", name=f"Co {i}")
+        db.update_company(cid, city="Dallas, TX", phone="+12145550100", last_crawled=date.today().isoformat())
+        db.add_job(cid, "website", f"j{i}", "Controller", "Dallas, TX", None, recent)
+        db.add_person(cid, f"Pat {i}", "CFO")
+    db.commit()
+    assert loxoenrich.auto(db, client=FakeLoxo())["added"] == 16
 
 
 def test_button_adds_then_opens_linkedin(tmp_path, monkeypatch):
@@ -143,7 +222,6 @@ def test_button_adds_then_opens_linkedin(tmp_path, monkeypatch):
 
 def test_every_number_and_email_and_more_people(tmp_path, monkeypatch):
     monkeypatch.setenv("ZOOMOLLO_NO_BACKGROUND", "1")
-    monkeypatch.setenv("LOXO_AUTO_ADD", "10")
     db, cid, pid = setup_person(tmp_path)
     extra = [db.add_person(cid, n, t) for n, t in (("Lee Sample", "Controller"), ("Pat Demo", "VP Human Resources"),
                                                    ("Kim Test", "Chief Executive Officer"),
