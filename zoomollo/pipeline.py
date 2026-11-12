@@ -131,6 +131,11 @@ def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
                     db.update_company(company_id, summary=line, summary_source="website")
         if page.headcount:
             said_headcount.append(page.headcount)
+        if not (article_page(page.url) or job_posting_page(page.url)):
+            from .geo import offshore_phrase
+            phrase = offshore_phrase(getattr(page, "text", "") or "")
+            if phrase and not (db.company_row(company_id) or {"abroad_note": 1})["abroad_note"]:
+                db.update_company(company_id, abroad_note=phrase)
         path = urlparse(page.url).path.strip("/")
         if (page.title or page.site_name) and (name_from is None or path.count("/") < name_from[0]):
             name_from = (path.count("/") + (1 if path else 0), page.site_name, page.title)

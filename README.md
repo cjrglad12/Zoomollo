@@ -219,6 +219,7 @@ Rules live in `zoomollo/exclusions.py`; edit the lists there to change them.
 - **Recruiting and staffing people.** Recruiters, talent acquisition, sourcers, staffing titles. They're never saved (and removed if a title is learned later) and never suggested for a role. HR managers/directors are kept in the org map but are not matched to roles unless the job is in HR.
 - **Recruiting and staffing companies.** Agencies, executive search and temp firms are dropped during discovery (map tags, names, homepage text, a list of ~70 big firms' domains). If one gets through, its homepage gives it away during the crawl: the company and everything saved for it is deleted and its domain is blocked for good. Use the *Block* button on a company page or `zoomollo block` for any the filters miss.
 - **Customer service and tech support.** A number labelled customer service, tech support, help desk, billing and the like, or found on a help, support or billing page, is treated as not a working number: it's never shown and never comes back. Toll-free numbers (800, 888...) are never offered to dial, since they almost always reach customer service or a phone tree. CSRs, support reps, help-desk staff and Customer Success Managers are never saved; whoever runs those teams (a Customer Service Manager, say) is kept.
+- **Companies with 20%+ of their people abroad.** Nothing public gives headcount by country, so Zoomollo goes by what it sees: if 20% or more of a company's open roles with a stated location are outside the US (at least 3 located roles), or its own site talks about offshore/nearshore development or delivery centers or its team in another country, it scores 0 and leaves Today. The reason shows on the company page.
 - Existing databases are cleaned automatically the next time they're opened.
 
 ## What Zoomollo connects to
@@ -237,6 +238,13 @@ No search engines, data vendors, email-verification services or other paid servi
 ## Loxo
 
 Put `LOXO_AGENCY_SLUG` and `LOXO_API_KEY` in `zoomollo-settings.txt` (and `LOXO_DOMAIN` if you're not on `app.loxo.co`). `zoomollo loxo-push` sends mapped people who have a found email and haven't been pushed yet (add `--hiring` for hiring managers only, `--include-guessed` to include guessed emails). It's a dry run by default so you can check the payload; confirm the field names against your Loxo API docs before the first `--send`. CSV export also works with Loxo's importer.
+
+### Contact info through Loxo
+
+Loxo finds emails and phone numbers (its Chrome extension on a LinkedIn profile, and its contact-finding agent). Its API has no "find contact info" call, so Zoomollo works around it:
+
+- **Add to Loxo & find contact info** (on Today and blitz cards when the person is missing an email or a direct line) adds them to Loxo as a Contact, copies in anything Loxo already has, and opens their LinkedIn profile in a new tab: click the Loxo extension there to find their details.
+- **Automatically:** every half hour Zoomollo adds the people on your best Today cards who are missing details to Loxo (`LOXO_AUTO_ADD` a day, default 15; 0 turns it off), and reads back the people it added over the last three weeks, copying in any email or phone Loxo now has. A work email at the company's domain is preferred; generic inboxes, toll-free and customer service numbers are never taken.
 
 ## What it doesn't do (on purpose)
 

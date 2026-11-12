@@ -286,7 +286,8 @@ def default_path() -> str:
 
 # Columns added after the first release; created on open if missing.
 MIGRATIONS = {
-    "companies": {"city": "TEXT", "industry": "TEXT", "address": "TEXT", "phone": "TEXT",
+    "companies": {"abroad_note": "TEXT",            # site says much of the team is abroad (geo.py)
+                  "city": "TEXT", "industry": "TEXT", "address": "TEXT", "phone": "TEXT",
                   "source": "TEXT",
                   "offlimits_reason": "TEXT", "offlimits_until": "TEXT",  # set by you in Zoomollo
                   "recruiters_seen": "INTEGER NOT NULL DEFAULT 0",  # in-house recruiters spotted (not saved)
@@ -308,7 +309,9 @@ MIGRATIONS = {
                "email_pattern": "TEXT",            # format behind the current guess
                "email_attempts": "INTEGER NOT NULL DEFAULT 0",
                "tried_emails": "TEXT",              # JSON list of addresses that bounced
-               "loxo_person_id": "INTEGER"},        # this contact's record in Loxo, once matched or created
+               "loxo_person_id": "INTEGER",         # this contact's record in Loxo, once matched or created
+               "loxo_added_at": "TEXT",             # added / linked to Loxo for contact info (loxoenrich)
+               "loxo_pulled_at": "TEXT"},           # last read back from Loxo
 }
 
 

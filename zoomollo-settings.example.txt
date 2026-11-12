@@ -12,6 +12,8 @@ MY_ADDRESS=
 # --- Loxo: off-limits checks (active clients, recent placements) and pushing contacts
 LOXO_AGENCY_SLUG=
 LOXO_API_KEY=
+# People added to Loxo each day so it can find their email and phone (0 = off)
+LOXO_AUTO_ADD=15
 # Months after a placement that the company stays off-limits (default 12)
 OFFLIMITS_MONTHS=
 
