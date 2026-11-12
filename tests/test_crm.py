@@ -153,8 +153,10 @@ def test_unsubscribe_reply_blocks_address(tmp_path):
     assert db.conn.execute("SELECT status FROM enrollments WHERE id = ?", (eid,)).fetchone()[0] == "unsubscribed"
 
 
-def test_web_pipeline_pages(tmp_path):
+def test_web_pipeline_pages(tmp_path, monkeypatch):
+    from zoomollo import web
     from zoomollo.web import create_app
+    monkeypatch.setattr(web, "_local_hour", lambda: 12)  # inside texting hours
     db, cid, pid, seq = setup(tmp_path)
     c = create_app(db.path).test_client()
     assert c.post("/enroll", data={"person": pid, "sequence": seq}).status_code == 302

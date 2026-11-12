@@ -7,3 +7,16 @@ __pycache__/
 .env
 .pytest_cache/
 zoomollo-settings.txt
+*.db-wal
+*.db-shm
+*.db-journal
+zoomollo-backup-*
+zoomollo-code-backup-*/
+*.log
+logs/
+*.pdf
+*.docx
+*.doc
+*resume*
+*Resume*
+*.xlsx

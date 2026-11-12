@@ -10,13 +10,19 @@ SENIORITY_RANK = {"c_level": 5, "vp": 4, "director": 3, "manager": 2, "staff": 1
 
 _SENIORITY = [
     ("vp", r"\b(vp|svp|evp|avp|vice[\s-]president)\b"),
-    ("c_level", r"\b(ceo|cfo|coo|cto|cmo|cio|cro|chro|cpo|chief|founder|co-?founder|(?<!product )owner|"
+    ("c_level", r"\b(ceo|cfo|coo|cto|cmo|cio|cro|chro|cpo|ciso|cdo|caio|cdao|cso|founder|co-?founder|(?<!product )owner|"
                 r"president|managing partner|managing director|senior partner|founding partner|"
                 r"name partner|equity partner|managing principal)\b"
                 r"(?!\s+(manager|success|marketing|relations|development|engineer|specialist|coordinator|"
-                r"account|program|enablement|operations))|^(partner|principal)\s*($|,|&|\band\b|\bat\b|-)"),
+                r"account|program|enablement|operations))|^(partner|principal)\s*($|,|&|\band\b|\bat\b|-)"
+                # "Chief Technology Officer", "Chief Estimator": yes. "Survey Party Chief", "Crew Chief": a field lead.
+                r"|^chief\b(?!\s+of\s+(staff|parties))|\bchief\s+(?:[\w&]+\s+){1,3}officer\b"),
+    # "Tax Partner", "Partner, Audit": at CPA and advisory firms partners own the hire.
+    ("vp", r"(?<!channel )(?<!business )(?<!alliance )(?<!technology )(?<!strategic )\bpartner\b"
+           r"(?!\s*(manager|success|marketing|relations|development|account|program|enablement|operations|sales|"
+           r"engineer|specialist|coordinator|channel|support|solutions))"),
     ("director", r"\b(director|head of|head,|head\b)"),
-    ("manager", r"\b(manager|mgr|lead|leader|supervisor|superintendent|foreman|team lead|"
+    ("manager", r"\b(manager|mgr|lead|leader|supervisor|superintendent|foreman|team lead|chief|"
                 r"general manager)\b"),
 ]
 
@@ -32,8 +38,15 @@ _DEPARTMENTS = [
                 r"tax|taxation|audit|auditor|assurance|cpa|reconcil\w*|fp&a|accounts payable|accounts receivable)\b"),
     ("customer", r"\b(customer success|customer service|support|client services|account management)\b"),
     ("product", r"\b(product|ux|ui|design|designer)\b"),
-    ("it", r"\b(it|information technology|systems administrator|cio|network|helpdesk|infrastructure)\b"),
-    ("engineering", r"\b(engineer\w*|software|developer|devops|cto|technical|architect|data)\b"),
+    ("it", r"\b(it|information technology|systems administrator|cio|network|helpdesk|infrastructure|"
+           r"security|cyber\w*|infosec|ciso|soc|siem|identity|iam|grc|threat|incident response|"
+           r"penetration|pen ?test\w*|vulnerability|service desk|sysadmin|endpoint)\b"),
+    ("engineering", r"\b(engineer\w*|engineering|software|developer|development|devops|cto|technical|technology|"
+                    r"architect\w*|data|analytics|analyst|machine learning|ml|ai|artificial intelligence|"
+                    r"deep learning|nlp|computer vision|llm|generative|data scien\w*|scientist|cloud|"
+                    r"platform|sre|site reliability|qa|quality assurance|test\w*|automation|"
+                    r"full[ -]?stack|front[ -]?end|back[ -]?end|mobile|ios|android|scrum|agile|"
+                    r"programmer|caio|cdao|cdo)\b"),
     ("legal", r"\b(legal|counsel|attorney|lawyer|paralegal|compliance)\b"),
     ("operations", r"\b(operations|coo|logistics|supply chain|project manager|superintendent|field|"
                    r"service|dispatch|warehouse|facilities|production|plant|install\w*|technician|"

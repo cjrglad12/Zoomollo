@@ -134,6 +134,20 @@ CREATE TABLE IF NOT EXISTS pipeline (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS loxo_outbox (        -- activities waiting to be (or already) logged in Loxo
+    id INTEGER PRIMARY KEY,
+    activity_id INTEGER,                         -- the Zoomollo activity it came from
+    company_id INTEGER,
+    person_id INTEGER,                           -- Zoomollo contact (people.id)
+    candidate_id INTEGER,                        -- for "Pitched" on the candidate's Loxo record
+    activity_type TEXT NOT NULL,                 -- Loxo activity type name, e.g. "Phone Call"
+    notes TEXT,
+    happened_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',      -- pending / sent / skipped / failed
+    detail TEXT,                                 -- why skipped or failed, or the Loxo event id
+    tries INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT
+);
 CREATE TABLE IF NOT EXISTS activities (         -- timeline: notes, emails, texts, stage changes, replies
     id INTEGER PRIMARY KEY,
     company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
@@ -179,6 +193,17 @@ CREATE TABLE IF NOT EXISTS emails (             -- emails sent or opened in your
     method TEXT NOT NULL,                      -- smtp | mailto
     message_id TEXT,
     sent_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS email_opens (        -- "X opened your email" / "Read:" receipts from your inbox
+    id INTEGER PRIMARY KEY,
+    email TEXT,                                -- who opened it
+    name TEXT,
+    person_id INTEGER REFERENCES people(id) ON DELETE SET NULL,
+    candidate_id INTEGER REFERENCES candidates(id) ON DELETE SET NULL,
+    company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+    subject TEXT,                              -- the email of yours they opened
+    message_id TEXT UNIQUE,                    -- the notification, so it's counted once
+    opened_at TEXT NOT NULL
 );
 -- Loxo data used for off-limits checks (refreshed by "Sync with Loxo").
 CREATE TABLE IF NOT EXISTS loxo_companies (
@@ -265,32 +290,60 @@ MIGRATIONS = {
                   "source": "TEXT",
                   "offlimits_reason": "TEXT", "offlimits_until": "TEXT",  # set by you in Zoomollo
                   "recruiters_seen": "INTEGER NOT NULL DEFAULT 0",  # in-house recruiters spotted (not saved)
-                  "last_checked": "TEXT"},          # last full look at its site / job boards
+                  "last_checked": "TEXT",           # last full look at its site / job boards
+                  "summary": "TEXT",                   # one tight line: what the company does
+                  "summary_source": "TEXT",            # website | you
+                  "headcount": "INTEGER",           # total employees, when known
+                  "headcount_source": "TEXT"},      # website | apollo | you
     "jobs": {"department": "TEXT", "description": "TEXT",
              "last_seen": "TEXT",                  # last time the role was still listed
              "salary_max": "INTEGER",              # yearly, parsed from the post when stated
              "closed_at": "TEXT",                  # stopped being listed (2 checks in a row)
              "missed_checks": "INTEGER NOT NULL DEFAULT 0"},
     "templates": {"kind": "TEXT NOT NULL DEFAULT 'text'", "subject": "TEXT"},
+    "enrollments": {"auto": "INTEGER NOT NULL DEFAULT 0"},  # 1 = started by hourly auto-prospecting
     "loxo_companies": {"status_name": "TEXT", "blocked": "INTEGER NOT NULL DEFAULT 0", "blocked_until": "TEXT",
                        "owner": "TEXT"},
     "people": {"pushed_to_loxo": "INTEGER NOT NULL DEFAULT 0",
                "email_pattern": "TEXT",            # format behind the current guess
                "email_attempts": "INTEGER NOT NULL DEFAULT 0",
-               "tried_emails": "TEXT"},             # JSON list of addresses that bounced
+               "tried_emails": "TEXT",              # JSON list of addresses that bounced
+               "loxo_person_id": "INTEGER"},        # this contact's record in Loxo, once matched or created
 }
 
 
 _SETUP_LOCK = threading.Lock()
+_READY: set[str] = set()  # database files this program has already set up
 
 
 class DB:
     def __init__(self, path: str | None = None):
         self.path = path or default_path()
-        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        # Wait up to a minute for another task's write (e.g. a big Loxo sync) instead of
+        # failing with "database is locked" after the default 5 seconds.
+        self.conn = sqlite3.connect(self.path, check_same_thread=False, timeout=60)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
+        self.conn.execute("PRAGMA synchronous=NORMAL")  # safe with WAL, and much less waiting on the disk
+        if self.path in _READY and self.conn.execute("PRAGMA user_version").fetchone()[0] >= 6:  # tables and repairs were already checked by this program: opening is instant
+            return
+        self._setup()
+        if self.path != ":memory:":
+            _READY.add(self.path)
+
+    def stamp(self) -> tuple:
+        """Changes whenever anything is written to the database file. Costs nothing to read."""
+        out = []
+        for p in (self.path, self.path + "-wal"):
+            try:
+                st = os.stat(p)
+                out.append((st.st_mtime_ns, st.st_size))
+            except OSError:
+                out.append(None)
+        return tuple(out)
+
+    def _setup(self) -> None:
         with _SETUP_LOCK:  # the web page and background jobs may open a new database at the same moment
             self.conn.executescript(SCHEMA)
             for table, cols in MIGRATIONS.items():
@@ -302,11 +355,39 @@ class DB:
                         except sqlite3.OperationalError as e:
                             if "duplicate column" not in str(e):  # another process added it first
                                 raise
+            # Lets "has the candidate list changed?" be answered from a small index, not 20,000 résumés.
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_candidates_version "
+                              "ON candidates(updated_at, resume_fetched_at)")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_candidates_source ON candidates(source)")
             self.conn.commit()
         if self.conn.execute("PRAGMA user_version").fetchone()[0] < 2:
             self.purge_excluded()
             self.conn.execute("PRAGMA user_version = 2")
             self.conn.commit()
+        if self.conn.execute("PRAGMA user_version").fetchone()[0] < 3:
+            with _SETUP_LOCK:
+                if self.conn.execute("PRAGMA user_version").fetchone()[0] < 3:
+                    self.fix_saved_data()
+                    self.conn.execute("PRAGMA user_version = 3")
+                    self.conn.commit()
+        if self.conn.execute("PRAGMA user_version").fetchone()[0] < 4:
+            with _SETUP_LOCK:
+                if self.conn.execute("PRAGMA user_version").fetchone()[0] < 4:
+                    self.fix_guess_labels()
+                    self.conn.execute("PRAGMA user_version = 4")
+                    self.conn.commit()
+        if self.conn.execute("PRAGMA user_version").fetchone()[0] < 5:
+            with _SETUP_LOCK:
+                if self.conn.execute("PRAGMA user_version").fetchone()[0] < 5:
+                    self.merge_duplicate_domains()
+                    self.conn.execute("PRAGMA user_version = 5")
+                    self.conn.commit()
+        if self.conn.execute("PRAGMA user_version").fetchone()[0] < 6:
+            with _SETUP_LOCK:
+                if self.conn.execute("PRAGMA user_version").fetchone()[0] < 6:
+                    self.fix_chief_levels()
+                    self.conn.execute("PRAGMA user_version = 6")
+                    self.conn.commit()
 
     # --- exclusions (see exclusions.py) ----------------------------------------
     def purge_excluded(self) -> dict:
@@ -472,9 +553,12 @@ class DB:
 
     def add_person(self, company_id: int, name: str, title: str | None = None, **fields) -> int | None:
         """Insert or enrich a person. Existing values win except blanks get filled."""
-        from .exclusions import is_excluded_email, is_recruiting_title
+        from .exclusions import is_excluded_email, is_recruiting_title, works_elsewhere
         from .orgmap import department, seniority
         name = " ".join(name.split())
+        if (title and fields.get("source") == "website"
+                and works_elsewhere(title, *self._co_name_domain(company_id))):
+            return None  # a customer / partner quoted on their site, not an employee
         key = name.lower()
         email = fields.get("email")
         if email and (self.is_suppressed(email) or self.is_bad_email(email) or is_excluded_email(email)):
@@ -539,13 +623,138 @@ class DB:
             args.append(department)
         if hiring_only:
             sql += " AND p.hiring_for IS NOT NULL"
-        sql += (" ORDER BY co.name, CASE p.seniority WHEN 'c_level' THEN 0 WHEN 'vp' THEN 1 "
+        sql += " ORDER BY "
+        if q:  # the person or title you typed first; people who only match on company or city after
+            sql += ("CASE WHEN p.name_key LIKE ? THEN 0 WHEN lower(COALESCE(p.title,'')) LIKE ? THEN 1 ELSE 2 END, ")
+            args += [like, like]
+        sql += ("co.name, CASE p.seniority WHEN 'c_level' THEN 0 WHEN 'vp' THEN 1 "
                 "WHEN 'director' THEN 2 WHEN 'manager' THEN 3 ELSE 4 END, p.name LIMIT ?")
         args.append(limit)
         return self.conn.execute(sql, args).fetchall()
 
     def company_row(self, company_id: int) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM companies WHERE id = ?", (company_id,)).fetchone()
+
+    def _co_name_domain(self, company_id: int) -> tuple[str | None, str | None]:
+        r = self.conn.execute("SELECT name, domain FROM companies WHERE id = ?", (company_id,)).fetchone()
+        return (r["name"], r["domain"]) if r else (None, None)
+
+    def set_website(self, company_id: int, domain: str) -> int:
+        """Give a company found without a website (e.g. from permits) its site.
+        Returns the company id to crawl: this one, or the existing company that
+        already has that website (this one's pipeline card and notes move to it)."""
+        from .crawler import normalize_domain
+        domain = normalize_domain(domain)
+        other = self.conn.execute("SELECT id FROM companies WHERE key = ? OR domain = ?", (domain, domain)).fetchone()
+        if other and other["id"] != company_id:
+            keep = other["id"]
+            if not self.conn.execute("SELECT 1 FROM pipeline WHERE company_id = ?", (keep,)).fetchone():
+                self.conn.execute("UPDATE pipeline SET company_id = ? WHERE company_id = ?", (keep, company_id))
+            for t in ("activities", "events"):
+                self.conn.execute(f"UPDATE {t} SET company_id = ? WHERE company_id = ?", (keep, company_id))
+            self.conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
+            self.conn.commit()
+            return keep
+        self.conn.execute("UPDATE companies SET key = ?, domain = ? WHERE id = ?", (domain, domain, company_id))
+        self.conn.commit()
+        return company_id
+
+    def fix_saved_data(self) -> dict:
+        """One-time repairs: websites saved with a port ("site.com:443"), and
+        customers / partners quoted on a site that were saved as its staff."""
+        from .crawler import normalize_domain
+        from .exclusions import works_elsewhere
+        out = {"domains": 0, "people": 0}
+        for r in self.conn.execute("SELECT id, key, domain FROM companies WHERE domain LIKE '%:%'").fetchall():
+            d = normalize_domain(r["domain"])
+            taken = self.conn.execute("SELECT 1 FROM companies WHERE key = ? AND id != ?", (d, r["id"])).fetchone()
+            key = d if (r["key"] == r["domain"] and not taken) else r["key"]
+            self.conn.execute("UPDATE companies SET domain = ?, key = ? WHERE id = ?", (d, key, r["id"]))
+            out["domains"] += 1
+        for r in self.conn.execute("SELECT p.id, p.title, p.email, c.name, c.domain FROM people p "
+                                   "JOIN companies c ON c.id = p.company_id WHERE p.source = 'website' AND "
+                                   "(p.title LIKE '%,%' OR p.title LIKE '% at %' OR p.title LIKE '% - %' "
+                                   "OR p.title LIKE '%|%')").fetchall():
+            if works_elsewhere(r["title"], r["name"], r["domain"]):
+                self.conn.execute("DELETE FROM people WHERE id = ?", (r["id"],))
+                if r["email"]:
+                    self.conn.execute("DELETE FROM contacts WHERE value = ? AND kind = 'guessed'", (r["email"],))
+                out["people"] += 1
+        self.conn.commit()
+        return out
+
+    def merge_companies(self, keep: int, drop: int) -> None:
+        """Fold company `drop` into `keep`: people, contacts, jobs, history. Same-named people
+        are combined (the kept record gains any title, email or phone it was missing)."""
+        if keep == drop:
+            return
+        tables = [r[0] for r in self.conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
+        cols = {t: {r[1] for r in self.conn.execute(f"PRAGMA table_info({t})")} for t in tables}
+        for p in self.conn.execute("SELECT * FROM people WHERE company_id = ?", (drop,)).fetchall():
+            twin = self.conn.execute("SELECT * FROM people WHERE company_id = ? AND name_key = ?",
+                                     (keep, p["name_key"])).fetchone()
+            if not twin:
+                continue
+            fill = {k: p[k] for k in ("title", "email", "email_status", "email_pattern", "phone", "linkedin",
+                                      "department", "seniority", "hiring_for")
+                    if k in p.keys() and p[k] and not twin[k] and not (k.startswith("email_") and twin["email"])}
+            if fill:
+                self.conn.execute(f"UPDATE people SET {', '.join(f'{k} = ?' for k in fill)} WHERE id = ?",
+                                  (*fill.values(), twin["id"]))
+            for t in tables:
+                if "person_id" in cols[t]:
+                    self.conn.execute(f"UPDATE OR IGNORE {t} SET person_id = ? WHERE person_id = ?", (twin["id"], p["id"]))
+                    self.conn.execute(f"DELETE FROM {t} WHERE person_id = ?", (p["id"],))
+            self.conn.execute("DELETE FROM people WHERE id = ?", (p["id"],))
+        for t in tables:
+            if "company_id" in cols[t]:
+                self.conn.execute(f"UPDATE OR IGNORE {t} SET company_id = ? WHERE company_id = ?", (keep, drop))
+                self.conn.execute(f"DELETE FROM {t} WHERE company_id = ?", (drop,))
+        k, d = (self.conn.execute("SELECT * FROM companies WHERE id = ?", (i,)).fetchone() for i in (keep, drop))
+        fill = {c: d[c] for c in ("city", "industry", "address", "phone", "email_pattern")
+                if c in d.keys() and d[c] and not k[c]}
+        if fill:
+            self.update_company(keep, **fill)
+        self.conn.execute("DELETE FROM companies WHERE id = ?", (drop,))
+        self.conn.commit()
+
+    def fix_chief_levels(self) -> int:
+        """One-time repair: "Survey Party Chief" and "Crew Chief" were saved as C-level executives.
+        Re-read the level of every title with "chief" in it; anyone demoted stops being a hiring manager."""
+        from .orgmap import seniority
+        n = 0
+        for r in self.conn.execute("SELECT id, title, seniority FROM people WHERE title LIKE '%chief%'").fetchall():
+            level = seniority(r["title"])
+            if level != r["seniority"]:
+                self.conn.execute("UPDATE people SET seniority = ?, hiring_for = NULL WHERE id = ?", (level, r["id"]))
+                n += 1
+        return n
+
+    def merge_duplicate_domains(self) -> int:
+        """Companies saved twice under one website become one (the copy with open jobs wins,
+        then the one with the shorter name)."""
+        n = 0
+        for (domain,) in self.conn.execute("SELECT domain FROM companies WHERE domain IS NOT NULL AND domain != '' "
+                                           "GROUP BY domain HAVING COUNT(*) > 1").fetchall():
+            rows = self.conn.execute(
+                "SELECT c.id, c.key, c.name, (SELECT COUNT(*) FROM jobs j WHERE j.company_id = c.id) AS jobs "
+                "FROM companies c WHERE c.domain = ?", (domain,)).fetchall()
+            rows.sort(key=lambda r: (r["key"] != domain, -r["jobs"], len(r["name"] or "")))
+            for r in rows[1:]:
+                self.merge_companies(rows[0]["id"], r["id"])
+                n += 1
+        return n
+
+    def fix_guess_labels(self) -> int:
+        """One-time repair: guesses that were wrongly labelled "found" (matched against
+        our own guesses) go back to "guessed". Addresses seen on a real page stay "found"."""
+        n = self.conn.execute(
+            "UPDATE people SET email_status = 'guessed' WHERE email_status = 'found' "
+            "AND EXISTS (SELECT 1 FROM contacts c WHERE c.value = people.email AND c.kind = 'guessed') "
+            "AND NOT EXISTS (SELECT 1 FROM contacts c WHERE c.value = people.email "
+            "AND COALESCE(c.kind, '') != 'guessed')").rowcount
+        self.conn.commit()
+        return n
 
     def add_social(self, company_id: int, kind: str, url: str) -> None:
         self.conn.execute("INSERT OR IGNORE INTO socials (company_id, kind, url) VALUES (?, ?, ?)",
@@ -651,7 +860,10 @@ class DB:
             sql += (" AND (lower(j.title) LIKE ? OR lower(co.key) LIKE ? OR lower(COALESCE(co.name,'')) LIKE ? "
                     "OR lower(COALESCE(j.location,'')) LIKE ?)")
             args += [f"%{q.lower()}%"] * 4
-        sql += " ORDER BY j.first_seen DESC LIMIT ?"
+            sql += " ORDER BY CASE WHEN lower(j.title) LIKE ? THEN 0 ELSE 1 END, j.first_seen DESC LIMIT ?"
+            args.append(f"%{q.lower()}%")
+        else:
+            sql += " ORDER BY j.first_seen DESC LIMIT ?"
         args.append(limit)
         return self.conn.execute(sql, args).fetchall()
 

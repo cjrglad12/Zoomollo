@@ -34,11 +34,24 @@ def _model() -> str:
     return os.environ.get("OLLAMA_MODEL", DEFAULT_MODEL)
 
 
+_AVAILABLE: dict = {}
+
+
 def available() -> bool:
+    """Is Ollama running on this computer? Checked quickly and remembered for 2 minutes, so the
+    Messages page doesn't wait seconds every time when it isn't installed ('localhost' on
+    Windows tries IPv6 then IPv4, each waiting the full timeout)."""
+    import time
+    now = time.time()
+    if _AVAILABLE and now - _AVAILABLE["at"] < 120:
+        return _AVAILABLE["ok"]
+    url = _url().replace("://localhost", "://127.0.0.1")
     try:
-        return requests.get(_url() + "/api/tags", timeout=2).ok
+        ok = requests.get(url + "/api/tags", timeout=0.6).ok
     except requests.RequestException:
-        return False
+        ok = False
+    _AVAILABLE.update(ok=ok, at=now)
+    return ok
 
 
 PROMPT = """You write short, friendly, professional text messages (SMS) for a recruiter

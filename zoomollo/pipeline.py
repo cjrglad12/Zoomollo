@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import csv
+import html
 import io
 import logging
 import re
 from typing import Callable
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 
 from .crawler import Crawler, normalize_domain
 from .db import DB, now, now_precise
 from .exclusions import is_staffing_domain, staffing_signal
-from .extract import is_role_email, looks_like_name, normalize_phone, social_kind
+from .extract import (_GENERIC_NAME, _domain_match, best_company_name, is_role_email, looks_like_name,
+                      normalize_phone, plausible_title, social_kind)
 from .jobboards import fetch_jobs
 from .patterns import PATTERNS, has_mx, infer_pattern, render, split_name
 
@@ -35,6 +37,57 @@ def company_name_from_title(title: str) -> str:
 
 # --- websites ---------------------------------------------------------------
 
+_CUSTOMER_PAGES = re.compile(
+    r"/(white-?papers?|partners?|customers?|customer-stories|success-stories|case-stud(y|ies)|testimonials?|reviews?|"
+    r"proof|clients?|portfolio|webinars?|events?)(/|$)", re.I)
+
+
+def quoted_customer_page(url: str) -> bool:
+    """Pages where the people named are customers and partners being quoted, not the company's own staff."""
+    return bool(_CUSTOMER_PAGES.search(urlparse(url or "").path))
+
+
+_JOB_PAGES = re.compile(r"/(jobs?|job-openings?|positions?|openings?|vacanc(?:y|ies))/[^/]+", re.I)
+_PEOPLE_PAGES = re.compile(r"(team|leadership|people|staff|about|who-we-are|management|partners|directory|bios?)", re.I)
+
+
+def people_page(url: str) -> bool:
+    """A team, leadership or about page: the names on it are staff even when the text under them isn't a title."""
+    return bool(_PEOPLE_PAGES.search(urlparse(url or "").path))
+_ARTICLE_PAGES = re.compile(
+    r"/(resources?|blogs?|news|press|press-releases?|insights?|thoughts?|posts?|articles?|advisor(?:y|ies)|"
+    r"threat[\w-]*|white-?papers?|case-stud(?:y|ies)|events?|webinars?|podcasts?|media)(/|$)", re.I)
+_BIO_VERBS = re.compile(r"\b(began|joined|worked|career|started|previously|prior|was|is|has|had|spent|served|years|"
+                        r"before|after|since|earned|graduated|holds|leads|brings)\b", re.I)
+_AT_ORG = re.compile(r"\bat\s+((?:[A-Z][\w&'’.-]*\s?){1,4})")
+
+
+def job_posting_page(url: str) -> bool:
+    """One job's own page: its headings ("Job Summary", "Program Leadership") are not people."""
+    return bool(_JOB_PAGES.search(urlparse(url or "").path))
+
+
+def article_page(url: str) -> bool:
+    """Blog posts, news, advisories and the like: numbers in them are rarely the company's phone."""
+    return bool(_ARTICLE_PAGES.search(urlparse(url or "").path))
+
+
+def quoted_outsider(name: str, page_text: str, company: str | None, domain: str | None) -> bool:
+    """'Angie Lombardi, Vice President of Marketing at Franklin Group' on Grace Hill's site:
+    someone introduced as working at another organisation is a customer or guest, not staff."""
+    text = page_text or ""
+    i = text.lower().find((name or "").lower())
+    if not name or i < 0:
+        return False
+    after = re.split(r"[.!?\"“”]\s", text[i + len(name): i + len(name) + 110])[0]
+    m = _AT_ORG.search(after)
+    if not m or _BIO_VERBS.search(after[:m.start()]) or len(after[:m.start()].split()) > 9:
+        return False
+    own = {w.lower() for w in re.findall(r"[A-Za-z]{3,}", (company or "") + " " + (domain or "").split(".")[0])}
+    org = {w.lower() for w in re.findall(r"[A-Za-z]{3,}", m.group(1))}
+    return bool(org) and not (org & own) and not any(o in (domain or "") for o in org)
+
+
 def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
                   region: str = "US", progress: Progress | None = None,
                   import_ats: bool = True) -> dict:
@@ -44,9 +97,14 @@ def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
         found["blocked"] = "staffing / recruiting company"
         return found
     company_id = db.company(domain, domain=domain)
+    # Never hold the database while waiting on a website: a call being logged on your phone
+    # must not wait behind a slow page. Save before every stretch of network reading.
+    db.commit()
     run_started = now_precise()
     crawler = Crawler(max_pages=max_pages, delay=delay, region=region)
     ats: set[tuple[str, str]] = set()
+    name_from: tuple | None = None  # (path depth, site name, title) of the page nearest the homepage
+    said_headcount: list[int] = []  # headcounts the site states about itself
 
     for page in crawler.crawl(domain):
         found["pages"] += 1
@@ -59,30 +117,57 @@ def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
                 db.block_company(company_id, why)
                 found["blocked"] = why
                 return found
-        if page.title and urlparse(page.url).path in ("", "/"):
+        if (page.title or page.site_name) and urlparse(page.url).path in ("", "/"):
             row = db.company_row(company_id)
-            if not row["name"] or row["name"] == row["key"]:
-                db.update_company(company_id, name=company_name_from_title(page.title))
+            if not row["name"] or row["name"] in (row["key"], domain) or _GENERIC_NAME.match(row["name"]):
+                db.update_company(company_id, name=best_company_name(domain, page.site_name, page.title))
         ats |= page.ats
+        if urlparse(page.url).path in ("", "/") and page.description:
+            row_ = db.company_row(company_id)
+            if row_ and row_["summary_source"] not in ("you", "curated"):  # a line you wrote is never overwritten
+                from .extract import tight_summary
+                line = tight_summary(page.description, row_["name"] or page.site_name)
+                if line and line != row_["summary"]:
+                    db.update_company(company_id, summary=line, summary_source="website")
+        if page.headcount:
+            said_headcount.append(page.headcount)
+        path = urlparse(page.url).path.strip("/")
+        if (page.title or page.site_name) and (name_from is None or path.count("/") < name_from[0]):
+            name_from = (path.count("/") + (1 if path else 0), page.site_name, page.title)
 
         named = {p.email: p for p in page.people if p.email}
+        # Until the company is named, its website name ("firemon") stops "Choose FireMon" being saved as a person.
+        cname = (db.company_row(company_id) or {"name": None})["name"] or domain.split(".")[0]
         for email in page.emails:
             p = named.get(email)
-            name = p.name if p and looks_like_name(p.name) else None
+            name = p.name if p and looks_like_name(p.name, cname) else None
             if db.add_contact(company_id, "email", email, _kind(email), name=name,
                               title=p.title if p else None, source_url=page.url):
                 found["emails"] += 1
         for p in page.people:
             if p.phone and p.name:
-                db.add_contact(company_id, "phone", p.phone, "person", name=p.name,
+                db.add_contact(company_id, "phone", p.phone, "person",
+                               name=p.name if looks_like_name(p.name, cname) else None,
                                title=p.title, source_url=page.url)
-            if p.name and looks_like_name(p.name):
+            own_email = bool(p.email and p.email.lower().endswith("@" + domain))
+            if quoted_customer_page(page.url) and not own_email:
+                continue  # a customer quoted in a case study or white paper doesn't work here
+            if job_posting_page(page.url) and not own_email:
+                continue  # headings on a job post ("Job Summary") are not people
+            if p.name and (p.name.strip().lower() == cname.strip().lower()
+                           or (not own_email and quoted_outsider(p.name, getattr(page, "text", "") or "", cname, domain))):
+                continue  # the company itself, or someone introduced as working somewhere else
+            if p.title:
+                p.title = " ".join(p.title.split())
+            if p.title and not plausible_title(p.title) and people_page(page.url):
+                p.title = None  # a bio sentence sat where the title goes: keep the person, drop the sentence
+            if p.name and looks_like_name(p.name, cname) and plausible_title(p.title):
                 from .orgmap import clean_linkedin_url
                 if db.add_person(company_id, p.name, p.title, email=p.email, phone=p.phone,
                                  linkedin_url=clean_linkedin_url(p.linkedin or ""), source="website",
                                  source_url=page.url):
                     found["people"] += 1
-        for phone in page.phones:
+        for phone in ([] if article_page(page.url) or job_posting_page(page.url) else page.phones):
             if db.add_contact(company_id, "phone", phone, "company", source_url=page.url):
                 found["phones"] += 1
         for url in page.socials:
@@ -97,7 +182,18 @@ def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
             found["jobs"] += 1
         db.commit()
 
+    row = db.company_row(company_id)
+    if said_headcount and (not row["headcount"] or row["headcount_source"] == "website"):
+        # What the site says most often; a figure you typed or one from Apollo is never overwritten.
+        top = max(set(said_headcount), key=lambda n: (said_headcount.count(n), n))
+        db.update_company(company_id, headcount=top, headcount_source="website")
+    if name_from and (not row["name"] or row["name"] in (row["key"], domain) or _GENERIC_NAME.match(row["name"])):
+        # The homepage redirected (e.g. to /en-us/), so name it from the page nearest the top.
+        db.update_company(company_id, name=best_company_name(domain, name_from[1], name_from[2]))
     loaded = {"website"} if found["pages"] else set()  # sources that answered this time
+    db.commit()
+    if import_ats and not ats:
+        ats |= find_job_boards(crawler, domain)
     if import_ats:
         for board, slug in sorted(ats):
             try:
@@ -108,10 +204,17 @@ def crawl_company(db: DB, domain: str, max_pages: int = 40, delay: float = 1.0,
 
     found["closed"] = reconcile_jobs(db, company_id, run_started, loaded)
     learn_pattern(db, company_id)
+    db.commit()
+    guess_people_emails(db, company_id)  # people found on the site get guessed work emails too
     if found["pages"]:
         db.update_company(company_id, last_crawled=now(), last_checked=now())
     db.commit()
     assign_hiring_managers(db, company_id)
+    try:  # named leaders from Apollo's free people search (only with APOLLO_API_KEY set)
+        from .leads import find_for_company
+        find_for_company(db, company_id)
+    except Exception as e:  # noqa: BLE001 - a lookup must never stop a crawl
+        log.info("leader lookup for %s failed: %s", domain, e)
     return found
 
 
@@ -134,6 +237,36 @@ def reconcile_jobs(db: DB, company_id: int, run_started: str, sources: set[str])
     return len(gone)
 
 
+_CAREERS_LINK = re.compile(r"(?i)career|/jobs\b|job-?search|job-?openings|current-?openings|join-?(us|our)")
+
+
+def find_job_boards(crawler: Crawler, domain: str, max_fetches: int = 8) -> set[tuple[str, str]]:
+    """Follow the site's Careers links, even to another host (careers.firm.com, a job
+    portal), up to two clicks deep, and spot which job board holds its openings.
+    Big sites spend a whole crawl on bios and never get there."""
+    from .extract import find_ats
+    found: set[tuple[str, str]] = set()
+    queue = [f"https://{domain}", f"https://{domain}/careers"]
+    seen: set[str] = set()
+    fetches = 0
+    while queue and fetches < max_fetches and not found:
+        url = queue.pop(0)
+        if url in seen:
+            continue
+        seen.add(url)
+        got = crawler.fetch(url)
+        fetches += 1
+        if not got:
+            continue
+        final_url, html_text = got
+        found |= find_ats(final_url) | find_ats(html_text)
+        for href in re.findall(r'href=["\']([^"\'#]+)', html_text):
+            link = urljoin(final_url, html.unescape(href))
+            if _CAREERS_LINK.search(link) and link.startswith("http") and link not in seen:
+                queue.append(link)
+    return found
+
+
 def learn_pattern(db: DB, company_id: int) -> str | None:
     """Learn the email format from named emails, and from known people whose
     names line up with addresses found anywhere on the site."""
@@ -142,7 +275,9 @@ def learn_pattern(db: DB, company_id: int) -> str | None:
     domain = row["domain"] if row else None
     if domain:
         locals_ = {r[0].split("@")[0]: r[0] for r in db.conn.execute(
-            "SELECT value FROM contacts WHERE company_id = ? AND type = 'email' AND value LIKE ?",
+            # Our own guesses aren't evidence: matching them back would mark every guess "found".
+            "SELECT value FROM contacts WHERE company_id = ? AND type = 'email' AND value LIKE ? "
+            "AND COALESCE(kind, '') != 'guessed'",
             (company_id, f"%@{domain}"))}
         for p in db.people(company_id):
             split = split_name(p["name"])
@@ -169,7 +304,9 @@ def import_jobs(db: DB, board: str, slug: str, domain: str | None = None,
     jobs = fetch_jobs(board, slug, region)
     if company_id is None:
         key = normalize_domain(domain) if domain else f"{board}:{slug}"
-        company_id = db.company(key, domain=normalize_domain(domain) if domain else None, name=slug)
+        # The board's address is only a stand-in name when there's no website to name it from.
+        company_id = db.company(key, domain=normalize_domain(domain) if domain else None,
+                                name=None if domain else slug)
     emails = phones = 0
     for j in jobs:
         db.add_job(company_id, j.board, j.external_id, j.title, j.location, j.url, j.posted_at, j.description)
@@ -200,6 +337,25 @@ def guess_people_emails(db: DB, company_id: int) -> int:
     if not row or not row["domain"] or has_mx(row["domain"]) is False:
         return 0
     return guess_all(db, company_id)
+
+
+def fill_missing_guesses(db: DB, progress: Progress | None = None) -> int:
+    """Give a first email guess to everyone who still has none, at every company with
+    a website that takes email. Catches people saved before guessing ran, or while a
+    DNS lookup was failing. Safe to run often: people already guessed are skipped."""
+    rows = db.conn.execute(
+        "SELECT DISTINCT p.company_id FROM people p JOIN companies c ON c.id = p.company_id "
+        "WHERE p.email IS NULL AND (p.email_status IS NULL OR p.email_status != 'failed') "
+        "AND c.domain IS NOT NULL AND c.domain != ''").fetchall()
+    n = 0
+    for r in rows:
+        try:
+            n += guess_people_emails(db, r[0])
+        except Exception as e:  # noqa: BLE001 - one bad company shouldn't stop the rest
+            log.info("guessing at company %s failed: %s", r[0], e)
+    if n and progress:
+        progress(f"✓ Email guesses filled in for {n} people who had none")
+    return n
 
 
 def guess_for_person(db: DB, full_name: str, domain: str, title: str | None = None,
@@ -346,6 +502,70 @@ def prospect(db: DB, what: str, where: str, limit: int = 25, crawl_pages: int = 
         say(f"{label}: {len(people)} people, {hm} hiring managers")
 
     db.commit()
+    return totals
+
+
+_NOT_EMPLOYER_NAME = re.compile(r"chamber|association|council|angels|investor network|small business development|"
+                                r"\bsbdc\b|accelerat|incubat|1 million cups|foundation|innovation quarter|"
+                                r"economic development", re.I)
+
+
+def crawl_directory(db: DB, url: str, what: str, where: str, limit: int = 40, crawl_pages: int = 15,
+                    progress: Progress | None = None) -> dict:
+    """Companies listed on a directory site (an industry association's member list, a
+    sponsor page, an incubator's portfolio). Each linked company website is checked
+    against 'what' (if given: every word must appear on its homepage), then saved
+    under that search and city and crawled like any other prospect."""
+    from urllib.parse import urlparse
+
+    from .crawler import Crawler
+    from .discover import check_site, hub_members
+
+    say = progress or (lambda m: None)
+    url = url if "://" in url else "https://" + url
+    hub = normalize_domain(url)
+    path = urlparse(url).path or "/"
+    crawler = Crawler(max_pages=200, delay=1.0)
+    # Directories are often split into A-Z pages and one page per member: read deep.
+    members = hub_members(crawler, hub, what or "", max_pages=200, start_paths=[path])
+    crawler.max_pages = 40
+    say(f"{hub}: {len(members)} linked company sites")
+    totals = {"companies": 0, "people": 0, "jobs": 0, "checked": 0, "skipped": 0}
+    label = what or "directory: " + hub
+    for c in members:
+        if totals["companies"] >= limit or totals["checked"] >= limit * 4:
+            break
+        if db.is_blocked(c.key, c.domain) or staffing_signal(c.name, domain=c.domain):
+            totals["skipped"] += 1
+            continue
+        totals["checked"] += 1
+        # Always look at the homepage: it weeds out staffing firms and gives a proper name.
+        ok, page_name = check_site(crawler, c.domain, what, where, trusted_location=True)
+        if not ok:
+            continue
+        if _NOT_EMPLOYER_NAME.search(" ".join(x for x in [c.name, page_name] if x)):
+            totals["skipped"] += 1  # other business groups, investor networks, incubators
+            continue
+        # The directory's link text is used only if it looks like the company ("Qentelli" for
+        # qentelli.com), not a button or headline ("Visit my Company").
+        anchor_ok = c.name and c.name != c.domain and _domain_match(c.name, c.domain) >= 2 \
+            and not _GENERIC_NAME.match(c.name)
+        name = c.name if anchor_ok else (page_name or best_company_name(c.domain))
+        cid = db.company(c.key, domain=c.domain, name=name)
+        db.update_company(cid, city=where, industry=label, source=f"listed on {hub}")
+        db.commit()
+        totals["companies"] += 1
+        try:
+            r = crawl_company(db, c.domain, max_pages=crawl_pages, delay=1.0)
+            if r.get("blocked"):
+                totals["companies"] -= 1
+                continue
+            totals["jobs"] += r["jobs"]
+        except Exception as e:  # noqa: BLE001 - one bad site shouldn't stop the run
+            say(f"{name}: crawl failed ({e})")
+        n = len(db.people(cid))
+        totals["people"] += n
+        say(f"[{totals['companies']}] {name} ({c.domain}): {n} people")
     return totals
 
 

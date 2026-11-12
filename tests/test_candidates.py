@@ -109,7 +109,11 @@ def test_candidate_pages(tmp_path):
     assert "ann.lee@acme.com" in pitch and "Senior Tax Manager for your Tax Manager opening" in pitch
     r = c.post("/pitch", data={"candidate": a, "job": job, "to": "ann.lee@acme.com", "subject": "S", "body": "B",
                                "action": "mailto"})
-    assert r.headers["Location"].startswith("mailto:ann.lee@acme.com")
+    # The draft opens in your email app; it only counts once you say it was sent.
+    assert r.status_code == 200 and "mailto:ann.lee@acme.com" in r.data.decode()
+    r = c.post("/pitch", data={"candidate": a, "job": job, "to": "ann.lee@acme.com", "subject": "S", "body": "B",
+                               "action": "logsent"})
+    assert r.status_code == 302
     assert crm.card(db, co)["stage"] == "contacted"
     r = c.post("/candidates/upload", data={"files": [(__import__("io").BytesIO(b"Sam Lee\nDenver, CO\nTax Analyst"), "sam.txt")]},
                content_type="multipart/form-data")

@@ -23,8 +23,12 @@ def fake_get(monkeypatch):
         for host, data in SAMPLES.items():
             if host in url:
                 return data
-        raise AssertionError(url)
+        raise jobboards.requests.HTTPError(f"404 {url}")  # boards this slug isn't on
     monkeypatch.setattr(jobboards, "_get", _get)
+
+    def _page(url, **k):  # boards read as web pages (iCIMS, JazzHR, Paylocity): not found either
+        raise jobboards.requests.ConnectionError(url)
+    monkeypatch.setattr(jobboards.requests, "get", _page)
 
 
 def test_all_boards_parse():

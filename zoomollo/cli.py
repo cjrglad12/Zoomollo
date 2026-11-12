@@ -81,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     dk.add_argument("--exclude", help='e.g. "intern, driver"')
     dk.add_argument("--locations", help='e.g. "Austin, TX; MO"')
     dk.add_argument("--min-salary")
+    dk.add_argument("--max-open-roles", help="Skip companies with more open roles than this (rough size limit)")
     tp = sub.add_parser("top", help="Companies ranked by hiring score")
     tp.add_argument("--limit", type=int, default=20)
     tp.add_argument("--niche", action="store_true", help="Only companies with roles in your niche")
@@ -269,11 +270,12 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "desk":
         from . import hiringscore
         d = hiringscore.load_desk(db)
-        if any(v is not None for v in (a.titles, a.exclude, a.locations, a.min_salary)):
+        if any(v is not None for v in (a.titles, a.exclude, a.locations, a.min_salary, a.max_open_roles)):
             d = hiringscore.save_desk(db, a.titles if a.titles is not None else ", ".join(d.titles),
                                       a.exclude if a.exclude is not None else ", ".join(d.exclude),
                                       a.locations if a.locations is not None else "; ".join(d.locations),
-                                      a.min_salary if a.min_salary is not None else d.min_salary)
+                                      a.min_salary if a.min_salary is not None else d.min_salary,
+                                      a.max_open_roles if a.max_open_roles is not None else "keep")
         print(json.dumps(d.__dict__, indent=2))
 
     elif a.cmd == "top":

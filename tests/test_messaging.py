@@ -77,8 +77,10 @@ def test_ai_draft_uses_local_model(monkeypatch):
 
 
 def test_web_messaging_flow(tmp_path, monkeypatch):
+    from zoomollo import web
     from zoomollo.web import create_app
     monkeypatch.setattr(ai, "available", lambda: False)
+    monkeypatch.setattr(web, "_local_hour", lambda: 12)  # inside texting hours
     db, cid, pid = setup(tmp_path)
     c = create_app(db.path).test_client()
     page = c.get("/messages").data.decode()

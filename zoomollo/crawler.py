@@ -42,7 +42,9 @@ def normalize_domain(domain_or_url: str) -> str:
     s = domain_or_url.strip()
     if "://" not in s:
         s = "https://" + s
-    return urlparse(s).netloc.lower().removeprefix("www.")
+    u = urlparse(s)
+    host = u.hostname or u.netloc.rsplit("@", 1)[-1].split(":", 1)[0]  # drop ":443", logins
+    return host.lower().rstrip(".").removeprefix("www.")
 
 
 def score(url: str) -> int:
@@ -97,7 +99,13 @@ class Crawler:
             return None
         self._throttle(urlparse(url).netloc)
         try:
-            r = self.session.get(url, timeout=self.timeout, allow_redirects=True)
+            try:
+                r = self.session.get(url, timeout=self.timeout, allow_redirects=True)
+            except requests.exceptions.SSLError:
+                # Some small-company sites have a broken certificate but load fine over http.
+                if not url.startswith("https://"):
+                    raise
+                r = self.session.get("http://" + url[len("https://"):], timeout=self.timeout, allow_redirects=True)
         except requests.RequestException as e:
             log.info("fetch failed %s: %s", url, e)
             return None
