@@ -24,6 +24,8 @@ from .db import DB, now
 log = logging.getLogger(__name__)
 
 SEARCH_URL = "https://api.apollo.io/api/v1/mixed_people/api_search"
+MATCH_URL = "https://api.apollo.io/api/v1/people/match"
+DEFAULT_FREE_CREDITS = 50  # per month; set APOLLO_FREE_CREDITS to your plan's free allowance
 SENIORITIES = ["c_suite", "vp", "director", "head"]
 REFRESH_DAYS = 30
 
@@ -41,8 +43,21 @@ SCHEMA = """CREATE TABLE IF NOT EXISTS leads (
 CREATE INDEX IF NOT EXISTS idx_leads_company ON leads(company_id);"""
 
 
+ENRICH_COLUMNS = {"last_name": "TEXT", "email": "TEXT", "email_status": "TEXT", "linkedin_url": "TEXT",
+                  "enriched_at": "TEXT", "enrich_note": "TEXT"}
+
+
 def _ensure(db: DB) -> None:
+    import sqlite3
     db.conn.executescript(SCHEMA)
+    have = {r[1] for r in db.conn.execute("PRAGMA table_info(leads)")}
+    for col, typ in ENRICH_COLUMNS.items():
+        if col not in have:
+            try:
+                db.conn.execute(f"ALTER TABLE leads ADD COLUMN {col} {typ}")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e):
+                    raise
 
 
 def configured() -> bool:
@@ -184,3 +199,121 @@ def backfill(db: DB, limit: int = 40, progress=None) -> int:
     if found and progress:
         progress(f"✓ Apollo: {found} named leaders found at {len(todo)} accounts")
     return found
+
+
+# --- enrichment: full name + work email, within your free monthly credits ---------------
+
+def monthly_allowance() -> int:
+    try:
+        return max(0, int(os.environ.get("APOLLO_FREE_CREDITS") or DEFAULT_FREE_CREDITS))
+    except ValueError:
+        return DEFAULT_FREE_CREDITS
+
+
+def daily_allowance() -> int:
+    """Spread the month's credits out instead of spending them all on the first day."""
+    return max(1, monthly_allowance() // 20) if monthly_allowance() else 0
+
+
+def _month(today: datetime | None = None) -> str:
+    return (today or datetime.now(timezone.utc)).strftime("%Y-%m")
+
+
+def credits_used(db: DB, day: bool = False) -> int:
+    key = "apollo_credits_" + (datetime.now(timezone.utc).strftime("%Y-%m-%d") if day else _month())
+    try:
+        return int(db.get_setting(key) or 0)
+    except ValueError:
+        return 0
+
+
+def _spend(db: DB) -> None:
+    for day in (False, True):
+        key = "apollo_credits_" + (datetime.now(timezone.utc).strftime("%Y-%m-%d") if day else _month())
+        db.set_setting(key, str(credits_used(db, day) + 1))
+
+
+def credits_left(db: DB) -> int:
+    """Credits Zoomollo may still use this month (0 once Apollo says the free credits are gone)."""
+    if db.get_setting("apollo_out_" + _month()):
+        return 0
+    return max(0, monthly_allowance() - credits_used(db))
+
+
+def enrich(db: DB, lead_id: int, timeout: float = 20) -> dict:
+    """Look up one lead's full name and work email. Uses at most one free credit; personal
+    emails and phone numbers (which cost more) are never requested."""
+    _ensure(db)
+    lead = db.conn.execute("SELECT * FROM leads WHERE id = ?", (lead_id,)).fetchone()
+    if not lead:
+        return {"ok": False, "msg": "No such lead."}
+    if lead["enriched_at"]:
+        return {"ok": bool(lead["last_name"]), "msg": "Already looked up.", "lead": dict(lead)}
+    key = os.environ.get("APOLLO_API_KEY", "").strip()
+    if not key:
+        return {"ok": False, "msg": "Add APOLLO_API_KEY to zoomollo-settings.txt first."}
+    if credits_left(db) <= 0:
+        return {"ok": False, "msg": "No free Apollo credits left this month."}
+    try:
+        r = requests.post(MATCH_URL, timeout=timeout,
+                          headers={"x-api-key": key, "Content-Type": "application/json", "Cache-Control": "no-cache"},
+                          json={"id": lead["apollo_id"], "reveal_personal_emails": False,
+                                "reveal_phone_number": False})
+    except requests.RequestException as e:
+        return {"ok": False, "msg": f"Apollo didn't answer ({e})."}
+    if r.status_code in (402, 403, 422, 429) and re.search(r"credit|quota|limit|upgrade|plan", r.text, re.I):
+        db.set_setting("apollo_out_" + _month(), now())  # stop for the month: never risk paid credits
+        db.commit()
+        return {"ok": False, "msg": "Apollo says the free credits are used up; enrichment paused until next month."}
+    if r.status_code != 200:
+        log.info("Apollo enrich %s: HTTP %s %s", lead_id, r.status_code, r.text[:200])
+        return {"ok": False, "msg": f"Apollo error (HTTP {r.status_code})."}
+    person = (r.json() or {}).get("person") or {}
+    last = (person.get("last_name") or "").strip()
+    email = (person.get("email") or "").strip().lower() or None
+    if "email_not_unlocked" in (email or "") or (email and "@" not in email):
+        email = None
+    status = (person.get("email_status") or "").lower() or None
+    if person:
+        _spend(db)  # count it whenever a person came back, so the budget errs on the safe side
+    db.conn.execute("UPDATE leads SET last_name = ?, email = ?, email_status = ?, linkedin_url = ?, title = COALESCE(?, title), "
+                    "enriched_at = ?, enrich_note = ? WHERE id = ?",
+                    (last or None, email, status, person.get("linkedin_url"), person.get("title"), now(),
+                     None if person else "not found in Apollo", lead_id))
+    if last:
+        from .orgmap import clean_linkedin_url
+        full = f"{lead['first_name']} {last}"
+        db.add_person(lead["company_id"], full, person.get("title") or lead["title"], email=email,
+                      email_status="found" if status == "verified" else "guessed",
+                      linkedin_url=clean_linkedin_url(person.get("linkedin_url") or ""), source="apollo")
+    db.commit()
+    return {"ok": bool(last), "msg": (f"{lead['first_name']} {last}" + (f" · {email}" if email else " · no work email on file"))
+            if last else "Apollo had no more on this person (no credit used).",
+            "lead": dict(db.conn.execute("SELECT * FROM leads WHERE id = ?", (lead_id,)).fetchone())}
+
+
+def auto_enrich(db: DB, limit: int | None = None, progress=None) -> int:
+    """Best leads at your highest-scoring accounts that have no email yet, a few per day."""
+    if not configured():
+        return 0
+    from .hiringscore import load_desk, score_all
+    _ensure(db)
+    room = min(credits_left(db), max(0, daily_allowance() - credits_used(db, day=True)))
+    if limit is not None:
+        room = min(room, limit)
+    done = 0
+    for s in sorted(score_all(db, load_desk(db)).values(), key=lambda s: -s.total):
+        if done >= room or s.total <= 0 or s.offlimits.blocked or not s.fit_roles:
+            continue
+        if db.conn.execute("SELECT 1 FROM people WHERE company_id = ? AND email IS NOT NULL", (s.company_id,)).fetchone():
+            continue  # already have someone to email there
+        lead = best(db, s.company_id, s.fit_roles)
+        if not lead or lead.get("enriched_at"):
+            continue
+        r = enrich(db, lead["id"])
+        if "free credits" in r["msg"] or "didn't answer" in r["msg"] or "error" in r["msg"]:
+            break
+        done += 1
+    if done and progress:
+        progress(f"✓ Apollo: looked up {done} leaders ({credits_left(db)} free credits left this month)")
+    return done

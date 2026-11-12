@@ -40,7 +40,7 @@ def pytest_configure(config):
     import os
     os.environ["ZOOMOLLO_NO_BACKGROUND"] = "1"
     for k in list(os.environ):
-        if k.startswith(("LOXO_", "SMTP_", "IMAP_", "GMAIL_")):
+        if k.startswith(("LOXO_", "SMTP_", "IMAP_", "GMAIL_", "APOLLO_")):
             os.environ.pop(k)
 
 
@@ -49,7 +49,7 @@ def no_real_accounts(monkeypatch):
     """Tests never touch real Loxo / mailbox accounts, even if the machine has them configured."""
     import os
     for k in list(os.environ):
-        if k.startswith(("LOXO_", "SMTP_", "IMAP_", "GMAIL_", "EMAIL_DAILY", "OFFLIMITS_", "MY_")):
+        if k.startswith(("LOXO_", "SMTP_", "IMAP_", "GMAIL_", "APOLLO_", "EMAIL_DAILY", "OFFLIMITS_", "MY_")):
             monkeypatch.delenv(k, raising=False)
 
 

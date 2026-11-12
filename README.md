@@ -1,6 +1,6 @@
 # Zoomollo
 
-Self-hosted contact discovery: a do-it-yourself ZoomInfo/Apollo with no search engines, data vendors or paid services. Tell it what kind of companies and which city ("commercial HVAC" in "Austin, TX"). It finds the companies, crawls their websites and job boards, maps their people by department and seniority, flags the likely hiring manager for each open role, and finds or guesses their emails. Everything lives in one local file on your computer that you can browse in a web page, export to CSV or push to Loxo.
+Self-hosted contact discovery: a do-it-yourself ZoomInfo/Apollo with no search engines or paid services (Apollo's free tier is optional). Tell it what kind of companies and which city ("commercial HVAC" in "Austin, TX"). It finds the companies, crawls their websites and job boards, maps their people by department and seniority, flags the likely hiring manager for each open role, and finds or guesses their emails. Everything lives in one local file on your computer that you can browse in a web page, export to CSV or push to Loxo.
 
 ## Quick start
 
@@ -131,6 +131,14 @@ While Zoomollo is open it re-checks each company's website and job boards every 
 
 The first look at a company is the baseline, so a new prospect run doesn't flood the list. A site that doesn't load never closes roles. Changes at companies in your pipeline also go into their timeline and a list on the Pipeline tab. Command line: `zoomollo recheck`, `zoomollo changes --days 7`.
 
+## Apollo (optional, free credits only)
+
+With `APOLLO_API_KEY` in `zoomollo-settings.txt`:
+
+- **Leaders at your accounts** (free, no credits): Apollo's people search gives first names, hidden last names and titles, so a call card can say *ask for Dana, VP, Controller*. Looked up for accounts on your desk, refreshed monthly.
+- **Full name and work email** (one credit each): **Get full name & email** on a call card or company page, and automatically for a few of your best accounts a day that have no email yet. The person is added as a contact (verified emails as found, others as guesses that the bounce loop retries).
+- **Free credits only:** Zoomollo spends at most `APOLLO_FREE_CREDITS` a month (default 50; set it to your plan's free allowance, or 0 to turn lookups off), no more than 1/20 of that per day, and pauses for the month as soon as Apollo says the credits are used up. Personal emails and phone numbers, which cost extra, are never requested. The buttons show how many credits are left this month.
+
 ## Candidates and the keyword lens
 
 The **Candidates** tab holds your candidates, from Loxo and/or résumé files you upload (PDF, Word .docx, text). Everything, résumés included, is stored only on your computer.
@@ -220,6 +228,7 @@ Rules live in `zoomollo/exclusions.py`; edit the lists there to change them.
 - Your own texting app (Messages / your phone), only when you tap a send button or scan a QR code.
 - LinkedIn, only in your own browser when you click a LinkedIn button.
 - Ollama on your own computer, only if you install it for AI drafting.
+- Apollo, only if you add an API key (free credits only, see above).
 - Loxo, only if you set it up (below).
 
 No search engines, data vendors, email-verification services or other paid services.
