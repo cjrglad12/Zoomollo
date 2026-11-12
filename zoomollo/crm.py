@@ -77,8 +77,13 @@ def today() -> str:
 
 
 def log(db: DB, company_id: int | None, kind: str, body: str, person_id: int | None = None) -> None:
-    db.conn.execute("INSERT INTO activities (company_id, person_id, kind, body, created_at) VALUES (?, ?, ?, ?, ?)",
-                    (company_id, person_id, kind, body, now()))
+    cur = db.conn.execute("INSERT INTO activities (company_id, person_id, kind, body, created_at) VALUES (?, ?, ?, ?, ?)",
+                          (company_id, person_id, kind, body, now()))
+    try:  # calls, emails and texts also go to Loxo (sent ~10 minutes later, after the Undo window)
+        from .loxosync import enqueue
+        enqueue(db, cur.lastrowid, company_id, person_id, kind, body)
+    except Exception:  # noqa: BLE001 - syncing must never stop you logging
+        pass
 
 
 # --- pipeline ---------------------------------------------------------------------
@@ -419,6 +424,10 @@ def send_smtp(db: DB, to: str, subject: str, body: str) -> str:
     my_name = db.get_setting("my_name") or os.environ.get("MY_NAME", "")
     msg["From"] = email.utils.formataddr((my_name, sender)) if my_name else sender
     msg["To"] = to
+    # EMAIL_CC: a copy of every send (e.g. your work address), so the thread lives there too.
+    cc = [a for a in _EMAIL_RX.findall(os.environ.get("EMAIL_CC", "")) if a.lower() != to.lower()]
+    if cc:
+        msg["Cc"] = ", ".join(cc)
     msg["Subject"] = subject
     msg["Date"] = email.utils.formatdate(localtime=True)
     msg["Message-ID"] = email.utils.make_msgid(domain=sender.split("@")[-1])
@@ -473,6 +482,10 @@ def send_due_emails(db: DB, limit: int | None = None, pause: float = 0.0, progre
     import time
     say = progress or (lambda m: None)
     sent = failed = 0
+    if not (db.get_setting("my_address") or os.environ.get("MY_ADDRESS")):
+        # Sales email without a postal address breaks CAN-SPAM: hold everything until it's set.
+        say("✗ Follow-up emails on hold: add your business mailing address on the Messages tab")
+        return {"sent": 0, "failed": 0}
     for it in due_items(db):
         if it["kind"] != "step" or it["channel"] != "email":
             continue
@@ -513,8 +526,82 @@ def _is_auto_reply(msg) -> bool:
             or bool(re.search(r"automatic reply|auto[- ]?reply|out of (the )?office|away from", msg.get("Subject", ""), re.I)))
 
 
+OPENS_FOLDER = "Email opens"  # Gmail label your open notifications are filtered into
+
+# "Read: Tax Manager at Acme" (Outlook read receipt), "Jane Doe opened your email",
+# "Your email was opened", "Jane viewed your message" (tracking tools), also when forwarded ("FW: ...").
+OPEN_SUBJECT = re.compile(
+    r"(?i)^\s*((fw|fwd|re)\s*:\s*)*(read\s*:|.*\b(opened|viewed|read)\s+(your|my|the)\s+(e-?mail|message)\b|"
+    r".*\b(e-?mail|message)\s+(was|has been)\s+(opened|read|viewed)\b|.*\bjust opened\b)")
+OPEN_BODY = re.compile(r"(?i)\bwas read on\b|\bopened your (e-?mail|message)\b|\byour (e-?mail|message) was opened\b")
+_EMAIL_RX = re.compile(r"[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def my_addresses() -> set[str]:
+    """Your own addresses (Gmail, Outlook, sending address), so they're never mistaken for a prospect."""
+    vals = [os.environ.get(k, "") for k in ("MY_EMAILS", "OUTLOOK_ADDRESS", "GMAIL_ADDRESS", "SMTP_FROM",
+                                            "SMTP_USER", "IMAP_USER")]
+    return {a.lower() for v in vals for a in _EMAIL_RX.findall(v)}
+
+
+def _who(db: DB, addrs: list[str], text: str):
+    """(email, name, person row, candidate row) for the first address (or name) we know."""
+    for a in addrs:
+        p = db.conn.execute("SELECT * FROM people WHERE lower(email) = ?", (a,)).fetchone()
+        c = db.conn.execute("SELECT * FROM candidates WHERE lower(email) = ?", (a,)).fetchone()
+        if p or c:
+            return a, (p or c)["name"], p, c
+    # "Jane Doe opened your email" with no address: match the name to someone you emailed.
+    m = re.search(r"^\s*(?:(?:fw|fwd|re)\s*:\s*)*([A-Z][\w.'-]+(?:\s+[A-Z][\w.'-]+){1,3})\s+(?:has\s+)?(?:just\s+)?"
+                  r"(?:opened|viewed|read)\b", text)
+    if m:
+        p = db.conn.execute("SELECT p.* FROM people p JOIN emails e ON e.person_id = p.id WHERE lower(p.name) = ? "
+                            "ORDER BY e.id DESC LIMIT 1", (m.group(1).lower(),)).fetchone()
+        if p:
+            return (p["email"] or "").lower() or None, p["name"], p, None
+    return (addrs[0] if addrs else None), None, None, None
+
+
+def record_open(db: DB, msg, mid: str, text: str) -> bool:
+    """An 'opened your email' notification: add who opened it to the Opened list."""
+    subject = msg.get("Subject", "")
+    mine = my_addresses()
+    # The reader's address: the receipt's sender, then any address in it that isn't yours.
+    addrs = [email.utils.parseaddr(msg.get("From", ""))[1].lower()] + [a.lower() for a in _EMAIL_RX.findall(text)]
+    addrs = [a for a in dict.fromkeys(addrs) if a and a not in mine and not BOUNCE_FROM.search(a)
+             and not re.search(r"no-?reply|notifications?@|mailer|postmaster", a)]
+    addr, name, p, c = _who(db, addrs, subject)
+    if not (p or c):
+        return False  # an open we can't tie to anyone you know: leave it alone
+    yours = re.sub(r"(?i)^\s*((fw|fwd|re)\s*:\s*)*(read\s*:\s*)?", "", subject).strip()
+    db.conn.execute("INSERT OR IGNORE INTO email_opens (email, name, person_id, candidate_id, company_id, subject, "
+                    "message_id, opened_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (addr, name, p["id"] if p else None, c["id"] if c else None, p["company_id"] if p else None,
+                     yours[:300], mid or None, now()))
+    if p:
+        log(db, p["company_id"], "opened", f"Opened your email: {yours}", p["id"])
+    return True
+
+
+def record_sent_copy(db: DB, msg, mid: str, text: str) -> int:
+    """A copy of an email you sent from Outlook (forwarded / Bcc'd to Gmail): log it as outreach to
+    the people you know on it, so replies to it are caught too."""
+    subject = msg.get("Subject", "")
+    to = [a.lower() for _, a in email.utils.getaddresses(msg.get_all("To", []) + msg.get_all("Cc", []))]
+    n = 0
+    for a in dict.fromkeys(to):
+        p = db.conn.execute("SELECT * FROM people WHERE lower(email) = ?", (a,)).fetchone()
+        if not p or (mid and db.conn.execute("SELECT 1 FROM emails WHERE message_id = ? AND to_addr = ?",
+                                              (mid, a)).fetchone()):
+            continue
+        record_email(db, a, subject, text[:4000] or "(sent from Outlook)", "outlook", p["id"], p["company_id"],
+                     message_id=mid or None)
+        n += 1
+    return n
+
+
 def process_message(db: DB, raw: bytes) -> str | None:
-    """Handle one inbox message. Returns 'reply', 'unsubscribe', 'bounce' or None."""
+    """Handle one inbox message. Returns 'reply', 'unsubscribe', 'bounce', 'opened', 'sent' or None."""
     from .emailcheck import mark_bad
     msg = email.message_from_bytes(raw)
     mid = (msg.get("Message-ID") or "").strip()
@@ -526,7 +613,11 @@ def process_message(db: DB, raw: bytes) -> str | None:
     result = None
     emailed = {r[0] for r in db.conn.execute("SELECT DISTINCT to_addr FROM emails")}
 
-    if BOUNCE_FROM.search(msg.get("From", "")) or BOUNCE_SUBJECT.search(subject):
+    if OPEN_SUBJECT.search(subject) or (OPEN_BODY.search(text[:1500]) and not (sender and sender in emailed)):
+        result = "opened" if record_open(db, msg, mid, subject + "\n" + text) else None
+    elif sender and sender in my_addresses():
+        result = "sent" if record_sent_copy(db, msg, mid, text) else None
+    elif BOUNCE_FROM.search(msg.get("From", "")) or BOUNCE_SUBJECT.search(subject):
         for addr in sorted(a for a in emailed if a in text.lower()):
             last = db.conn.execute("SELECT * FROM emails WHERE to_addr = ? ORDER BY id DESC LIMIT 1", (addr,)).fetchone()
             log(db, last["company_id"], "bounce", f"Bounced: {addr}", last["person_id"])
@@ -572,19 +663,24 @@ def check_inbox(db: DB, days: int = 30) -> dict:
     user = os.environ.get("IMAP_USER") or os.environ["SMTP_USER"]
     password = os.environ.get("IMAP_PASSWORD") or os.environ["SMTP_PASSWORD"]
     since = (date.today() - timedelta(days=days)).strftime("%d-%b-%Y")
-    counts = {"reply": 0, "unsubscribe": 0, "bounce": 0, "checked": 0}
+    counts = {"reply": 0, "unsubscribe": 0, "bounce": 0, "opened": 0, "sent": 0, "checked": 0}
+    # The inbox, plus the folder (Gmail label) your "opened" notifications are filtered into.
+    folders = ["INBOX", os.environ.get("OPENS_FOLDER") or OPENS_FOLDER]
     with imaplib.IMAP4_SSL(host, int(os.environ.get("IMAP_PORT") or 993)) as box:
         box.login(user, password)
-        box.select("INBOX", readonly=True)
-        _, data = box.search(None, "SINCE", since)
-        for num in (data[0].split() if data and data[0] else [])[-500:]:
-            _, msg_data = box.fetch(num, "(BODY.PEEK[])")
-            raw = next((x[1] for x in msg_data if isinstance(x, tuple)), None)
-            if not raw:
-                continue
-            counts["checked"] += 1
-            r = process_message(db, raw)
-            if r:
-                counts[r] += 1
+        for folder in folders:
+            status, _ = box.select(f'"{folder}"', readonly=True)
+            if status != "OK":
+                continue  # that label doesn't exist yet
+            _, data = box.search(None, "SINCE", since)
+            for num in (data[0].split() if data and data[0] else [])[-500:]:
+                _, msg_data = box.fetch(num, "(BODY.PEEK[])")
+                raw = next((x[1] for x in msg_data if isinstance(x, tuple)), None)
+                if not raw:
+                    continue
+                counts["checked"] += 1
+                r = process_message(db, raw)
+                if r:
+                    counts[r] += 1
     db.set_setting("inbox_checked_at", datetime.now().isoformat(timespec="seconds"))
     return counts

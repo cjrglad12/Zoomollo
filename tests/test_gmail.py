@@ -58,7 +58,9 @@ def test_save_values_keeps_other_lines(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "settings_path", lambda: f)
     settings.save_values({"GMAIL_ADDRESS": "new@gmail.com", "SMTP_PORT": "587"})
     assert f.read_text() == "# comment\nLOXO_API_KEY=keep\nGMAIL_ADDRESS=new@gmail.com\nSMTP_PORT=587\n"
-    assert oct(f.stat().st_mode)[-3:] == "600" and os.environ["GMAIL_ADDRESS"] == "new@gmail.com"
+    assert os.environ["GMAIL_ADDRESS"] == "new@gmail.com"
+    if os.name != "nt":  # Windows has no owner-only mode bits
+        assert oct(f.stat().st_mode)[-3:] == "600"
 
 
 def test_connect_gmail_in_the_app(tmp_path, monkeypatch):

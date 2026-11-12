@@ -51,6 +51,7 @@ STAFFING_DOMAINS = {
     "apexsystems.com", "kornferry.com", "heidrick.com", "spencerstuart.com", "russellreynolds.com",
     "egonzehnder.com", "hays.com", "michaelpage.com", "pagegroup.com", "aston-carter.com",
     "astoncarter.com", "actalentservices.com", "actalent.com", "volt.com", "trueblue.com",
+    "rgp.com", "robertwalters.com", "ajilon.com",
     "peopleready.com", "labor-ready.com", "tandym.com", "beaconhillstaffing.com", "lhh.com",
     "modis.com", "akkodis.com", "cybercoders.com", "jobot.com", "motionrecruitment.com",
     "addisongroup.com", "vacocareers.com", "lucasgroup.com", "hirequest.com", "staffmark.com",
@@ -84,6 +85,44 @@ def is_excluded_email(email: str) -> bool:
 
 def is_recruiting_title(title: str | None) -> bool:
     return bool(title) and bool(_RECRUITING_TITLE.search(title))
+
+
+# Words that make the end of a title an organisation's name, e.g.
+# "Chief Growth Officer, Ideal Credit Union" (a customer quoted on the site).
+_ORG_WORDS = re.compile(
+    r"\b(credit union|bank|bancorp|bancshares|banking company|national association|savings|"
+    r"inc|incorporated|llc|l\.l\.c|llp|corp|corporation|co|company|ltd|limited|plc|gmbh|"
+    r"university|college|hospital|health system|medical center|school district|isd|"
+    r"county)\b\.?\s*$|^(the )?(bank|university|city|county|state|department) of\b", re.I)
+_NA = re.compile(r"\bN\.\s?A\.?$")  # "Bank of X, N.A." (capitals only)
+_STOP = {"the", "of", "and", "inc", "llc", "co", "corp", "company", "group", "com", "www"}
+
+
+def _words(s: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", s.lower()) if w not in _STOP and len(w) > 1}
+
+
+def works_elsewhere(title: str | None, company_name: str | None = None, domain: str | None = None) -> bool:
+    """True when a title names another organisation ("CFO, Ideal Credit Union",
+    "Board member at Acme Bank"): a customer, partner or board member quoted
+    on the site, not someone who works at this company."""
+    if not title:
+        return False
+    parts = re.split(r",\s+|\s+at\s+|\s+[|@–—]\s+|\s+-\s+", title.strip())
+    tails = [p.strip(" .") for p in parts[1:] if p.strip(" .")]
+    if not tails:
+        return False
+    own = _words(company_name or "") | _words((domain or "").split(".")[0])
+    stem = re.sub(r"[^a-z0-9]", "", (domain or "").split(".")[0].lower())
+    for tail in tails:
+        if not (_ORG_WORDS.search(tail) or _NA.search(tail)):
+            continue
+        w = _words(tail)
+        squashed = re.sub(r"[^a-z0-9]", "", tail.lower())
+        if (own and w & own) or (len(stem) >= 4 and stem in squashed):
+            continue  # it's this company's own name
+        return True
+    return False
 
 
 def staffing_signal(*texts: str | None, domain: str | None = None) -> str | None:

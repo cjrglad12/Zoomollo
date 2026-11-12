@@ -70,7 +70,7 @@ Add the link (or a downloaded file's path) under **Public data sources** on the 
 ## Then, for each company
 
 1. **Crawl the website.** Team, leadership, about, contact and careers pages first, plus the sitemap. Names and titles come from team cards and structured data; emails and phones from the page.
-2. **Open roles.** From the company's careers page (job data most career sites publish for Google Jobs, and links that read like job titles) and its Greenhouse, Lever, Ashby or Workable job board when the careers page links to one.
+2. **Open roles.** From the company's careers page (job data most career sites publish for Google Jobs, and links that read like job titles) and its Greenhouse, Lever, Ashby, Workable, Workday, Oracle, UKG (UltiPro), iCIMS, Breezy, ClearCompany, ADP Workforce Now, JazzHR, Jobvite or Paylocity job board when the careers page links to one. If the site read doesn't turn one up, Zoomollo follows the site's Careers links (including to a separate careers site) to find it, which is how big firms like BDO and Weaver get their openings in.
 3. **Map people.** Everyone found is sorted into a department and a level (Exec, VP, Director, Manager, Staff).
 4. **Roles × contacts.** Every open role is cross-referenced with the company's people, strongest evidence first:
 
@@ -81,7 +81,11 @@ Add the link (or a downloaded file's path) under **Public data sources** on the 
    | contact in posting | an email/phone in the post not tied to a known person |
    | likely hiring manager | closest more-senior person in the same department |
    | owner / exec | small company with no matching department leader |
-5. **Emails.** Real addresses found on the site or in job posts are matched to people. The company's email format is learned from them and used to guess the rest (marked `guessed`).
+5. **Emails.** Real addresses found on the site or in job posts are matched to people. The company's email format is learned from them and used to guess the rest (marked `guessed`). Anyone left without an email (for example, saved while a lookup failed) gets one at the next hourly re-check.
+
+Customers, partners and board members quoted on a company's site ("CFO, Ideal Credit Union") are recognised by the other organisation in their title and aren't saved as that company's staff.
+
+**Companies without a website** (common for permit and license records) show *No website yet* on their page. Paste the website there and Zoomollo reads it in the background; if that site is already saved as another company, the two are merged.
 
 People come from company websites, job posts and public records only. Direct phone numbers for individuals are found only when a company publishes them; otherwise you get the main line.
 
@@ -161,6 +165,7 @@ The **Pipeline** tab is where business development happens.
   - **Open in email app** (no setup): your email app opens with the email written; or
   - **Send** straight from Zoomollo through *your own* mailbox. For Gmail / Google Workspace, use **Connect Gmail** on the Pipeline tab: your address plus a Google [app password](https://myaccount.google.com/apppasswords) (needs 2-Step Verification). Zoomollo fills in Gmail's settings, tests the login without sending anything, and saves it only in `zoomollo-settings.txt` on your computer (never uploaded). *Send test email to myself* checks it end to end. Other mailboxes: set `SMTP_*` / `IMAP_*` in that file. Many Microsoft 365 business accounts block this, so use *Open in email app* there. *Send all due* sends them all, up to `EMAIL_DAILY_LIMIT` a day (default 40).
 - **Replies, unsubscribes and bounces:** with `IMAP_HOST` set, Zoomollo checks your inbox every 10 minutes. A reply stops that person's follow-ups and moves the company to *Replied*; out-of-office replies are ignored; "unsubscribe" blocks the address for good; a bounce marks the address bad and resends that step to the next email guess. Without it, change the stage yourself.
+- **Auto-prospecting** (Pipeline tab): once turned on, every hour (weekdays, 8am–4pm by default) Zoomollo emails up to 5 of your best actively-hiring accounts. It picks one person per company, starts them on your follow-up sequence and sends their due follow-up emails. Accounts emailed in the last 21 days, or called or texted in the last few days, are skipped. It pauses itself if more than 25% of its addresses bounce in a week. A text step you haven't sent after 3 days is skipped so the follow-up emails behind it still go out.
 - Every email ends with your name, company, **mailing address** and an unsubscribe line (required by US CAN-SPAM for sales email); set them under *Your details* on the Messages tab.
 
 ## Off-limits (Loxo)
@@ -211,7 +216,7 @@ Rules live in `zoomollo/exclusions.py`; edit the lists there to change them.
 
 - The websites it crawls (company sites, chamber/association sites, government open-data portals, and the data links you add). If a portal's own catalog search doesn't answer, the open-data platform's shared catalog for that portal is used.
 - OpenStreetMap's free public servers, for map lookups.
-- Companies' own job boards (Greenhouse, Lever, Ashby, Workable) when their careers page links to one.
+- Companies' own job boards (Greenhouse, Lever, Ashby, Workable, Workday, Oracle, UKG/UltiPro, iCIMS, Breezy, ClearCompany, ADP, JazzHR, Jobvite, Paylocity) when their careers page links to one.
 - Your own texting app (Messages / your phone), only when you tap a send button or scan a QR code.
 - LinkedIn, only in your own browser when you click a LinkedIn button.
 - Ollama on your own computer, only if you install it for AI drafting.

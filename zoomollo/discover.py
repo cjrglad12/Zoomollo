@@ -21,6 +21,7 @@ import socket
 import time
 from functools import lru_cache
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 
 import requests
 
@@ -32,7 +33,12 @@ from .exclusions import staffing_signal
 log = logging.getLogger(__name__)
 
 NOMINATIM = "https://nominatim.openstreetmap.org/search"
-OVERPASS = "https://overpass-api.de/api/interpreter"
+# Public map-data servers, tried in order; each is often overloaded (502/504), so _overpass()
+# retries and falls back to the next one instead of giving up on the first error.
+OVERPASS_SERVERS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+]
 
 # Plain-English industry words -> OpenStreetMap tag values worth matching too.
 SYNONYMS = {
@@ -66,7 +72,18 @@ NOT_COMPANIES = {
     "apple.com", "amazon.com", "salary.com", "comparably.com", "rocketreach.co", "signalhire.com",
     "lusha.com", "owler.com", "cbinsights.com", "pitchbook.com", "techbehemoths.com", "designrush.com",
     "goodfirms.co", "sortlist.com", "themanifest.com", "trustpilot.com", "angel.co", "wellfound.com",
+    # Chamber website platforms and big portals linked from member directories.
+    "growthzone.com", "growthzoneapp.com", "chambermaster.com", "micronetonline.com", "weblinkconnect.com",
+    "memberclicks.net", "chamberorganizer.com", "uschamber.com", "yahoo.com", "msn.com",
+    "constantcontactpages.com", "constantcontact.com", "mailchimp.com", "list-manage.com", "eventbrite.com",
+    "zoom.us", "wixsite.com", "squarespace.com", "wordpress.com", "vimeo.com", "spotify.com", "goo.gl",
+    "mozilla.org", "givebutter.com", "clickup.com", "memberzone.com", "paypal.com", "gofundme.com",
+    "donorbox.org", "typeform.com", "jotform.com", "hubspot.com", "calendly.com",
 }
+# Map entries that are public places, not employers to recruit for.
+_NOT_EMPLOYER_TAGS = {("office", "government"), ("amenity", "library"), ("amenity", "school"),
+                      ("amenity", "college"), ("amenity", "university"), ("amenity", "parcel_locker"),
+                      ("leisure", "park"), ("office", "military"), ("military", "office")}
 _LISTICLE = re.compile(r"^(the\s+)?(top|best|\d+\s+(best|top))\b|\b(near me|list of|directory)\b", re.I)
 
 
@@ -105,6 +122,20 @@ def _http_post(url, **kw):
     return r.json()
 
 
+def _overpass(query: str, rounds: int = 3):
+    """Run a map-data query, trying each server in turn for a few rounds."""
+    last: Exception | None = None
+    for attempt in range(rounds):
+        for url in OVERPASS_SERVERS:
+            try:
+                return _http_post(url, data={"data": query})
+            except requests.RequestException as e:
+                last = e
+                log.warning("Map server %s failed (%s); trying the next one", url, e)
+        time.sleep(10 * (attempt + 1))
+    raise last
+
+
 def is_company_domain(domain: str) -> bool:
     return bool(domain) and not any(domain == d or domain.endswith("." + d) for d in NOT_COMPANIES) \
         and not domain.endswith((".gov", ".edu", ".mil"))
@@ -139,6 +170,35 @@ def keyword_regex(what: str) -> str:
     return "|".join(sorted(re.escape(t).replace("_", "[ _-]") for t in terms))
 
 
+# Specialties of a trade: a map listing or company name rarely spells these out
+# ("SPIARS Engineering" for "mechanical engineering"), so lenient checks skip them.
+_SPECIALTY = {"mep", "mechanical", "electrical", "civil", "structural", "plumbing", "environmental"}
+# Public bodies and places that show up in map searches but aren't employers to recruit for.
+_PUBLIC_BODY = re.compile(r"\b(town of|city of|county of|library|university|college|army|corps of engineers|"
+                          r"extension service|project office|entrance processing|public works)\b", re.I)
+
+
+def matches_all(what: str, text: str, lenient: bool = False) -> bool:
+    """Stricter than keyword_regex: every main word of the search must appear (allowing
+    word endings, e.g. engineer/engineering, and the word's synonyms), so "data analytics"
+    no longer matches any site that merely says "your data". lenient=True skips trade
+    specialties (MEP, mechanical...) when another word is left to check."""
+    low = what.lower()
+    words = [w for w in re.findall(r"[a-z0-9]+", low) if len(w) > 2 and w not in _FILLER]
+    words = [w for w in words if w not in _MODIFIERS] or words
+    if lenient:
+        words = [w for w in words if w not in _SPECIALTY] or words
+    for w in words:
+        stem = w[:max(4, len(w) - 3)] if len(w) > 4 else w
+        alts = [rf"\b{re.escape(stem)}\w*"]
+        for k, vals in SYNONYMS.items():
+            if k.strip() and k.strip() in w:
+                alts += [rf"\b{re.escape(v).replace('_', '[ _-]')}" for v in vals if v not in ("it", "company")]
+        if not re.search("|".join(alts), text or "", re.I):
+            return False
+    return True
+
+
 def osm_companies(what: str, where: str, limit: int = 200) -> list[Candidate]:
     bbox = geocode(where)
     if not bbox:
@@ -154,7 +214,7 @@ def osm_companies(what: str, where: str, limit: int = 200) -> list[Candidate]:
         sel.append(f'nwr["name"~"{rx}",i]["{k}"]({b});')
     sel.append(f'nwr["description"~"{rx}",i]["name"]({b});')
     query = f'[out:json][timeout:90];({"".join(sel)});out center tags {limit * 2};'
-    data = _http_post(OVERPASS, data={"data": query})
+    data = _overpass(query)
 
     out: dict[str, Candidate] = {}
     for el in data.get("elements", []):
@@ -162,6 +222,12 @@ def osm_companies(what: str, where: str, limit: int = 200) -> list[Candidate]:
         name = t.get("name")
         if not name or t.get("office") == "employment_agency" or staffing_signal(name, t.get("description")):
             continue
+        if any(t.get(k) == v for k, v in _NOT_EMPLOYER_TAGS) or _PUBLIC_BODY.search(name):
+            continue
+        # The map query matches any one word; note whether every word of the search shows up
+        # in the name or the map's own description of the place (checked in find_companies).
+        tag_text = " ".join([name] + [str(t.get(k, "")).replace("_", " ") for k in
+                                      ("office", "craft", "shop", "industrial", "healthcare", "description")])
         site = t.get("website") or t.get("contact:website") or t.get("url")
         domain = normalize_domain(site) if site else None
         if domain and not is_company_domain(domain):
@@ -170,7 +236,7 @@ def osm_companies(what: str, where: str, limit: int = 200) -> list[Candidate]:
                                     t.get("addr:city"), t.get("addr:state"), t.get("addr:postcode")] if x)
         c = Candidate(name=name, domain=domain, phone=t.get("phone") or t.get("contact:phone"),
                       email=t.get("email") or t.get("contact:email"), address=addr or None,
-                      sources={"openstreetmap"})
+                      sources={"openstreetmap"}, hint=matches_all(what, tag_text, lenient=True))
         out.setdefault(c.key, c)
     return list(out.values())[:limit]
 
@@ -196,6 +262,7 @@ STATES = {
 }
 
 
+@lru_cache(maxsize=4096)
 def split_where(where: str) -> tuple[str, str | None]:
     """'Austin, TX' -> ('Austin', 'TX'); 'Austin Texas' -> ('Austin', 'TX')."""
     parts = [p.strip() for p in re.split(r",", where) if p.strip()]
@@ -246,10 +313,10 @@ def check_site(crawler: Crawler, domain: str, what: str, where: str,
     text = page_text(page)
     if staffing_signal(page.title, page.description, domain=domain):
         return False, None
-    rx = keyword_regex(what)
-    kw = bool(rx) and re.search(rf"\b({rx})", text, re.I) is not None
+    kw = matches_all(what, text)
     ok = kw and (trusted_location or location_hit(text, where))
-    return ok, (_name_from_title(page.title) if page.title else None)
+    from .extract import best_company_name
+    return ok, (best_company_name(domain, page.site_name, page.title) if (page.title or page.site_name) else None)
 
 
 def guess_website(crawler: Crawler, name: str, where: str, phone: str | None = None,
@@ -290,8 +357,12 @@ _HUB_NAME = (r"chamber of commerce|chamber|business association|business allianc
              r"builders association|contractors association|merchants association|association of|"
              r"economic development|business league|board of realtors|bar association|medical society")
 _DIRECTORY = re.compile(r"(member|directory|business|list|categor|search|find|ql|browse|industr)", re.I)
-_GENERIC_ANCHOR = re.compile(r"^(website|visit( (our )?(web)?site)?|web ?site|www\..*|https?://.*|learn more|"
-                             r"more info|view (profile|details|website)|details|click here|homepage|link)$", re.I)
+_GENERIC_ANCHOR = re.compile(r"^(website|visit( (our )?(web)?site)?|web ?site|www\..*|https?://.*|learn more.*|"
+                             r"more info|view (profile|details|website)|details|click here|homepage|link|"
+                             r"download|donate|contact( us)?|sign ?up.*|subscribe.*|register.*|log ?in.*|"
+                             r"no login.*|apply.*|read more.*)$", re.I)
+_NOT_DIRECTORY = re.compile(r"/(events?|news|login|logout|jobs|calendar|hotdeals|marketspace|marketplace|"
+                            r"member/newmemberapp|members?/(login|account|portal)|eventregistration)", re.I)
 
 
 def osm_hubs(where: str, limit: int = 15) -> list[tuple[str, str]]:
@@ -305,7 +376,7 @@ def osm_hubs(where: str, limit: int = 15) -> list[tuple[str, str]]:
              f'nwr["name"~"{_HUB_NAME}",i]["website"]({b});'
              f'nwr["name"~"{_HUB_NAME}",i]["contact:website"]({b});'
              f');out center tags 200;')
-    data = _http_post(OVERPASS, data={"data": query})
+    data = _overpass(query)
     out: dict[str, str] = {}
     for el in data.get("elements", []):
         t = el.get("tags", {})
@@ -319,31 +390,50 @@ def osm_hubs(where: str, limit: int = 15) -> list[tuple[str, str]]:
     return [(name, d) for d, name in ranked][:limit]
 
 
-def hub_members(crawler: Crawler, hub_domain: str, what: str, max_pages: int = 40) -> list[Candidate]:
+def hub_members(crawler: Crawler, hub_domain: str, what: str, max_pages: int = 40,
+                start_paths: list[str] | None = None) -> list[Candidate]:
     """Crawl a business group's site (member directory first) and collect the
     member websites it links to. Members whose listing mentions the industry
     are marked with 'hint' so they're checked first."""
     rx = keyword_regex(what)
     kw = re.compile(rf"\b({rx})", re.I) if rx else None
 
+    # A specific directory page given by the user (e.g. /list or /sponsors-partners): stay in
+    # that section of the site and only take companies from pages inside it, so links from
+    # the group's events, news and login pages don't come along.
+    sections = [("/" + p.strip("/").split("/")[0]) for p in (start_paths or []) if p.strip("/")]
+
+    def in_section(url: str) -> bool:
+        path = urlparse(url).path or "/"
+        return not sections or any(path == s or path.startswith(s + "/") for s in sections)
+
     def scorer(url: str, text: str) -> int:
         s = 6 if _DIRECTORY.search(url + " " + text) else 0
         if kw and kw.search(url.replace("-", " ") + " " + text):
             s += 12
+        if sections:
+            s += 40 if in_section(url) else 0
+            s -= 20 if _NOT_DIRECTORY.search(urlparse(url).path) else 0
         return s
 
     seeds = ["/", "/member-directory", "/directory", "/members", "/business-directory", "/list",
              "/members/directory", "/find-a-member", "/member-search"]
+    if start_paths:  # a specific directory / sponsor page given by the user goes first
+        seeds = list(dict.fromkeys([p for p in start_paths if p] + ([] if sections else seeds)))
     crawler.max_pages = max_pages
     out: dict[str, Candidate] = {}
     for page in crawler.crawl(hub_domain, seed_paths=seeds, scorer=scorer, include_subdomains=True,
                               keep_query=True, use_sitemap=False):
+        if not in_section(page.url):
+            continue
         context = " ".join(x for x in [page.title, page.url] if x)
         page_hint = bool(kw and kw.search(context.replace("-", " ")))
         for link in page.links:
             d = domain_of(link)
             if not d or d == hub_domain or d.endswith("." + hub_domain) or hub_domain.endswith("." + d):
                 continue
+            if ".".join(d.split(".")[-2:]) == ".".join(hub_domain.split(".")[-2:]):
+                continue  # another part of the group's own site (careers.x.org vs business.x.org)
             if social_kind(link) or not is_company_domain(d):
                 continue
             text = page.link_text.get(link, "").strip()
@@ -371,9 +461,19 @@ def find_companies(what: str, where: str, limit: int = 25, use_osm: bool = True,
     if use_osm:
         try:
             osm = osm_companies(what, where, limit * 3)
-            say(f"Map data: {len(osm)} matching businesses")
+            # Keep a map entry only if every word of the search matches its name/description,
+            # or else its own homepage (e.g. "SPIARS Engineering" for "mechanical engineering").
+            kept, site_checks = 0, 0
             for c in osm:
+                if not c.hint:
+                    if not c.domain or site_checks >= limit * 3:
+                        continue
+                    site_checks += 1
+                    if not check_site(crawler, c.domain, what, where, trusted_location=True)[0]:
+                        continue
                 merged.setdefault(c.key, c)
+                kept += 1
+            say(f"Map data: {len(osm)} possible businesses, {kept} match every word of the search")
         except requests.RequestException as e:
             say(f"Map data unavailable: {e}")
 

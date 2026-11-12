@@ -31,6 +31,13 @@ SMTP_PASSWORD=
 # Address to send from, if different from SMTP_USER
 SMTP_FROM=
 # Read replies, unsubscribes and bounces from your inbox (uses SMTP_USER / SMTP_PASSWORD unless set below)
+# Work email you can't connect directly (e.g. Outlook): forward it to the Gmail above.
+# OUTLOOK_ADDRESS: copies of mail sent from it are logged as outreach. OPENS_FOLDER: Gmail label
+# your "opened your email" / "Read:" notifications go to (they fill the Opened my email list).
+OUTLOOK_ADDRESS=
+OPENS_FOLDER=Email opens
+# Cc this address on every email Zoomollo sends (e.g. your work address)
+EMAIL_CC=
 IMAP_HOST=
 IMAP_USER=
 IMAP_PASSWORD=

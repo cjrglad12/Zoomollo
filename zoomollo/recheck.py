@@ -86,7 +86,7 @@ def run(db: DB, limit: int | None = None, days: int | None = None, pages: int = 
 
 def changes(db: DB, days: int = 7, niche_only: bool = False, pipeline_only: bool = False) -> dict[str, list[dict]]:
     """Events from the last `days`, grouped by kind, newest first, with each company's score."""
-    from .hiringscore import job_fit, load_desk, score_all
+    from .hiringscore import _location_ok, job_fit, load_desk, score_all
     desk = load_desk(db)
     since = (date.today() - timedelta(days=days)).isoformat()
     rows = db.conn.execute(
@@ -102,6 +102,8 @@ def changes(db: DB, days: int = 7, niche_only: bool = False, pipeline_only: bool
         d["fit"] = bool(d["job_title"]) and job_fit(d["job_title"], d["job_location"], d["city"], d["salary_max"], desk)[0]
         if niche_only and d["job_title"] and not d["fit"]:
             continue
+        if d["job_title"] and desk.locations and not _location_ok(d["job_location"], d["city"], desk, d["job_title"]):
+            continue  # a role outside your area isn't news for your desk
         if pipeline_only and not d["stage"]:
             continue
         d["score"] = scores.get(d["company_id"])

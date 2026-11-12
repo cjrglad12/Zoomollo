@@ -111,6 +111,11 @@ def search_catalog(domain: str, query: str, limit: int = 20) -> list[dict] | Non
     out = []
     for item in (data or {}).get("results", []):
         res = item.get("resource") or {}
+        # The shared catalog falls back to datasets from any city (Mesa AZ, Cincinnati...)
+        # when it doesn't know this portal; only keep ones published by the portal asked for.
+        item_domain = ((item.get("metadata") or {}).get("domain") or domain).lower()
+        if item_domain != domain.lower():
+            continue
         if res.get("id") and res.get("name"):
             out.append({"id": res["id"], "name": res["name"], "description": res.get("description") or "",
                         "columns": res.get("columns_field_name") or [],

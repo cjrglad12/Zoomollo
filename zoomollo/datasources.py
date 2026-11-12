@@ -24,7 +24,7 @@ from urllib.parse import urlencode, urlparse
 import requests
 
 from .crawler import USER_AGENT, normalize_domain
-from .discover import STATES, Candidate, is_company_domain, keyword_regex, split_where
+from .discover import STATES, Candidate, is_company_domain, keyword_regex, matches_all, split_where
 
 MAX_BYTES = 300 * 1024 * 1024
 
@@ -114,7 +114,7 @@ def candidates_from_rows(rows: list[dict], what: str, where: str, label: str) ->
         if not name:
             continue
         haystack = " ".join(str(v) for v in row.values() if isinstance(v, (str, int, float)))
-        if kw and not kw.search(haystack):
+        if kw and not matches_all(what, haystack):  # every word of the search, not just one
             continue
         row_city = val(row, "city")
         if row_city and city and row_city.lower() != city.lower():

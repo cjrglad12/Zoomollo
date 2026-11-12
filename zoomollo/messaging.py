@@ -69,18 +69,60 @@ def person_fields(db: DB, person_id: int | None = None, company_id: int | None =
             vals.update(name=p["name"], first_name=parts[0], last_name=parts[-1] if len(parts) > 1 else "",
                         title=p["title"] or "")
             if p["hiring_for"]:
-                vals["role"] = p["hiring_for"].split(";")[0].split(" (+")[0].strip()
+                theirs = [t.split(" (+")[0].strip() for t in p["hiring_for"].split(";") if t.strip()]
+                # Write about a role you place. Someone linked to "Administrative Assistant; Electrical
+                # Engineer" gets the Electrical Engineer email, not the first role on their list.
+                co_ = db.company_row(company_id)
+                city_ = co_["city"] if co_ else None
+                mine = _fit_titles(db, company_id, city_)
+                on_desk = [t for t in theirs if t in mine]
+                vals["role"] = (on_desk[0] if on_desk else
+                                _best_open_role(db, company_id, city_) if mine else theirs[0])
     if company_id is not None:
         co = db.company_row(company_id)
         if co:
             vals["company"] = co["name"] or co["domain"] or ""
             vals["city"] = (co["city"] or "").split(",")[0].strip()
         if not vals["role"]:
-            job = db.conn.execute("SELECT title FROM jobs WHERE company_id = ? ORDER BY first_seen DESC LIMIT 1",
-                                  (company_id,)).fetchone()
-            if job:
-                vals["role"] = job["title"]
+            vals["role"] = _best_open_role(db, company_id, co["city"] if co else None)
+    if vals["role"]:
+        from .today import clean_role
+        vals["role"] = clean_role(vals["role"])  # "Data Engineer", not "Data Engineer (Contract) (On-site)"
     return vals
+
+
+def _fit_titles(db: DB, company_id: int, city: str | None) -> set[str]:
+    """Titles of this company's open roles that are on your desk."""
+    from .hiringscore import job_fit, load_desk
+    desk = load_desk(db)
+    if not desk.is_set:
+        return set()
+    return {j["title"] for j in db.conn.execute(
+        "SELECT title, location, salary_max FROM jobs WHERE company_id = ? AND closed_at IS NULL", (company_id,))
+        if job_fit(j["title"], j["location"], city, j["salary_max"], desk)[0]}
+
+
+def _best_open_role(db: DB, company_id: int, city: str | None) -> str:
+    """The newest open role you place (your desk), else the newest open role."""
+    from .hiringscore import job_fit, load_desk
+    desk = load_desk(db)
+    jobs = db.conn.execute("SELECT title, location, salary_max FROM jobs WHERE company_id = ? AND closed_at IS NULL "
+                           "ORDER BY first_seen DESC", (company_id,)).fetchall()
+    for j in jobs:
+        if job_fit(j["title"], j["location"], city, j["salary_max"], desk)[0]:
+            return j["title"]
+    return jobs[0]["title"] if jobs else ""
+
+
+_SILENT_H = re.compile(r"(?i)^(hour|honest|honor|honour|heir)")
+
+
+def _fix_an(m: re.Match) -> str:
+    """'an Data Scientist' -> 'a Data Scientist'; keeps 'an SDET', 'an hour', 'an Engineer'."""
+    word = m.group(2)
+    if word[0].lower() in "aeiou" or _SILENT_H.match(word) or re.match(r"[FHLMNRSX][A-Z0-9]{1,5}\b", word):
+        return m.group(0)
+    return f"{m.group(1)} {word}"
 
 
 def render(body: str, values: dict[str, str]) -> tuple[str, list[str]]:
@@ -107,6 +149,7 @@ def render(body: str, values: dict[str, str]) -> tuple[str, list[str]]:
     text = re.sub(r"([.!?])\.+", r"\1", text)
     # "a HVAC Technician" -> "an HVAC Technician", "a Engineer" -> "an Engineer"
     text = re.sub(r"\b([Aa]) (?=(?:[AEIOaeio]\w|[FHLMNRSX][A-Z0-9]{1,5}\b))", lambda m: m.group(1) + "n ", text)
+    text = re.sub(r"\b([Aa])n (\w+)", _fix_an, text)  # and back: "an Data Scientist" -> "a Data Scientist"
     return text.strip(), sorted(set(missing))
 
 

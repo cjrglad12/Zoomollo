@@ -110,7 +110,16 @@ def cross_reference(db: DB, company_id: int) -> int:
                 reason = "owner / exec"
             link(p["id"], None, reason)
 
-        for (pid, value), reason in links.items():
+        lead = {"vp": 0, "director": 0, "c_level": 1, "manager": 2}
+        by_id = {p["id"]: p for p in people}
+
+        def order(item):
+            (pid, _), reason = item
+            p = by_id.get(pid) or {}
+            return (RANK[reason], 0 if p.get("department") == dept and dept != "other" else 1,
+                    lead.get(p.get("seniority") or "staff", 3))
+
+        for (pid, value), reason in sorted(links.items(), key=order):
             db.conn.execute("INSERT OR IGNORE INTO job_contacts (job_id, person_id, value, reason, rank) "
                             "VALUES (?, ?, ?, ?, ?)", (job["id"], pid, value, reason, RANK[reason]))
             written += 1

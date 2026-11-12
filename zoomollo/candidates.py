@@ -9,6 +9,8 @@ jump the queue. Everything is stored on this computer.
 
 from __future__ import annotations
 
+from datetime import date
+
 import re
 from collections import deque
 
@@ -207,8 +209,16 @@ def document(c) -> str:
 _DOCS: dict[str, dict[int, tuple[str, str, str, str]]] = {}
 
 
+_DOC_STAMP: dict = {}
+_SEARCHES: dict = {}
+
+
 def _documents(db: DB, source: str | None) -> list[tuple[int, str, str]]:
     cache = _DOCS.setdefault(db.path, {})
+    stamp = None if db.conn.in_transaction else _pool(db)["version"]
+    if stamp and _DOC_STAMP.get(db.path) == stamp and cache:
+        return [(cid, d[2], d[3]) for cid, d in cache.items() if not source or d[1] == source]  # candidates unchanged
+    _DOC_STAMP[db.path] = stamp
     versions = {r["id"]: (r["v"], r["source"]) for r in db.conn.execute(
         "SELECT id, source, COALESCE(resume_fetched_at, '') || '|' || COALESCE(updated_at, '') || '|' || "
         "COALESCE(length(skills), 0) || '|' || COALESCE(title, '') || '|' || COALESCE(state, '') AS v FROM candidates")}
@@ -224,14 +234,25 @@ def _documents(db: DB, source: str | None) -> list[tuple[int, str, str]]:
 
 
 def search(db: DB, query: str, limit: int = 50, source: str | None = None) -> tuple[list[lens.Group], list[dict]]:
+    """Best matches first. Someone whose job title matches comes before someone whose résumé
+    merely mentions the word (a Controller before an analyst who wrote "domain controller")."""
+    # Only a change to the candidate list makes an earlier answer stale (logging a call does not).
+    stamp = None if db.conn.in_transaction else _pool(db)["version"]
+    key = (db.path, stamp, query, limit, source)
+    if stamp and key in _SEARCHES:
+        return _SEARCHES[key]
     groups = lens.parse(query)
+    titles = {c["id"]: c["title"] for c in _pool(db)["rows"]} if groups else {}
+    in_title: dict[int, int] = {}
     scored = []
     for cid, doc, lower in _documents(db, source):
         m = lens.counts(doc, groups, lower) if groups else lens.Match([], [])
         if groups and not m.groups_found:
             continue
+        t = titles.get(cid) or ""
+        in_title[cid] = lens.counts(t, groups, t.lower()).groups_found if t else 0
         scored.append((cid, m))
-    scored.sort(key=lambda x: (-x[1].groups_found, -x[1].total))
+    scored.sort(key=lambda x: (-x[1].groups_found, -in_title[x[0]], -x[1].total))
     scored = scored[: limit * 2]
     rows = {}
     ids = [cid for cid, _ in scored]
@@ -243,12 +264,17 @@ def search(db: DB, query: str, limit: int = 50, source: str | None = None) -> tu
     for cid, m in scored:
         if cid in rows:
             results.append({"c": rows[cid], "match": m, "fit": lens.fit_label(m, groups)})
-    results.sort(key=lambda r: (-r["match"].groups_found, -r["match"].total, r["c"]["name"] or ""))
+    results.sort(key=lambda r: (-r["match"].groups_found, -in_title.get(r["c"]["id"], 0), -r["match"].total,
+                                r["c"]["name"] or ""))
     results = results[:limit]
     # Résumés not downloaded yet for the best results: fetch those first.
     for r in reversed(results):
         if r["c"]["source"] == "loxo" and r["c"]["resume_status"] is None:
             RESUME_QUEUE.appendleft(r["c"]["id"])
+    if stamp:
+        if len(_SEARCHES) > 40:
+            _SEARCHES.clear()
+        _SEARCHES[key] = (groups, results)
     return groups, results
 
 
@@ -285,13 +311,17 @@ def matching_jobs(db: DB, candidate_id: int, limit: int = 25) -> list[dict]:
     if not words:
         return []
     pats = [re.compile(r"\b" + lens._word_rx(w), re.I) for w in words]
-    scores = score_all(db)
+    from .hiringscore import _location_ok, load_desk
+    desk = load_desk(db)
+    scores = score_all(db, desk)
     out = []
     for j in db.conn.execute("SELECT j.*, co.name AS company_name, co.key AS company_key, co.city "
                              "FROM jobs j JOIN companies co ON co.id = j.company_id WHERE j.closed_at IS NULL"):
         hits = sum(1 for p in pats if p.search(j["title"]))
         if hits * 2 < len(pats) or hits == 0:
             continue
+        if desk.locations and not _location_ok(j["location"], j["city"], desk, j["title"]):
+            continue  # outside your area (same rule as the Jobs page)
         st = offlimits_status(db, j["company_id"])
         hm = db.conn.execute(
             "SELECT p.* FROM job_contacts jc JOIN people p ON p.id = jc.person_id WHERE jc.job_id = ? "
@@ -300,6 +330,158 @@ def matching_jobs(db: DB, candidate_id: int, limit: int = 25) -> list[dict]:
                     "manager": dict(hm) if hm else None})
     out.sort(key=lambda r: (r["offlimits"].blocked, -r["hits"], -(r["score"].total if r["score"] else 0)))
     return out[:limit]
+
+
+_ROLE_NOISE = {"senior", "sr", "junior", "jr", "lead", "staff", "principal", "ii", "iii", "iv", "i", "of", "and",
+               "the", "associate", "assistant", "level", "manager", "specialist", "consultant", "in", "for",
+               "contract", "remote", "onsite", "site", "hybrid", "full", "time", "part"}
+_DFW = re.compile(r"\b(dallas|fort worth|ft\.? worth|plano|irving|frisco|richardson|addison|arlington|southlake|"
+                  r"westlake|mckinney|allen|carrollton|lewisville|grapevine|coppell|denton|garland|keller|"
+                  r"las colinas|flower mound|mesquite|grand prairie|euless|bedford|hurst|prosper|rockwall)\b", re.I)
+_MATCH_CACHE: dict[tuple, list[dict]] = {}
+STALE_YEARS = 3  # a résumé whose latest date is older than this needs a check-in before pitching
+
+
+def resume_year(text: str) -> int | None:
+    """The latest year a résumé mentions (its 'as of' date): 'March 2015 - Present' -> 2015."""
+    this_year = date.today().year
+    years = [int(y) for y in re.findall(r"\b(19[89]\d|20\d\d)\b", text or "") if int(y) <= this_year]
+    return max(years) if years else None
+
+
+_LEVELS = [  # checked in order; first match wins
+    (6, r"\b(chief|cxo|ceo|cto|cfo|coo|cio|ciso|president|founder|partner)\b"),
+    (5, r"\b(vp|svp|evp|vice president|head of)\b"),
+    (4, r"\b(director|dir\.?)\b"),
+    (3, r"\b(manager|mgr|principal|staff|architect|team lead|lead)\b"),
+    (2, r"\b(senior|sr\.?|iii|iv|3|4)\b"),
+    (0, r"\b(intern|junior|jr\.?|entry|associate|assistant|trainee|i|1)\b"),
+]
+
+
+def level_of(title: str) -> int:
+    """Rough seniority: 0 entry · 1 mid · 2 senior · 3 lead/manager · 4 director · 5 VP · 6 C-level."""
+    t = (title or "").lower()
+    for lvl, rx in _LEVELS:
+        if re.search(rx, t):
+            return lvl
+    return 1
+
+
+def _role_words(title: str) -> list[str]:
+    from .today import clean_role
+    words = [w for w in re.findall(r"[a-z0-9+#]+", clean_role(title).lower()) if w not in _ROLE_NOISE]
+    return [w for w in words if len(w) > 1]
+
+
+_POOL: dict = {}
+
+
+def _pool(db: DB) -> dict:
+    """Every candidate's short details, read once and reused until the candidate list changes.
+
+    Reading the whole candidate table for each open role is what made the Jobs page take seconds.
+    """
+    stamp = None if db.conn.in_transaction else db.stamp()
+    have = _POOL.get(db.path)
+    if have and stamp and stamp[0] is not None and have["stamp"] == stamp:
+        return have
+    version = tuple(db.conn.execute("SELECT COUNT(*), MAX(COALESCE(updated_at, '')), "
+                                    "MAX(COALESCE(resume_fetched_at, '')) FROM candidates").fetchone())
+    if have and have["version"] == version:
+        have["stamp"] = stamp
+        return have
+    rows = [dict(r) for r in db.conn.execute(
+        "SELECT id, name, title, company, city, state, resume_status, resume_text IS NOT NULL "
+        "AS has_resume, email, phone FROM candidates WHERE title IS NOT NULL AND title <> ''")]
+    _POOL[db.path] = {"stamp": stamp, "version": version, "rows": rows, "years": {}}
+    return _POOL[db.path]
+
+
+def candidates_for_job(db: DB, job_id: int, limit: int = 3) -> list[dict]:
+    """Best candidates to pitch for one open role: [{c, why, local}], best first.
+
+    A candidate's own job title must contain every key word of the role (allowing word
+    endings: engineer / engineering), or all but one for roles of 3+ key words. Then:
+    in DFW > elsewhere in Texas > unknown > out of state, a résumé on file, and their
+    title matching more of the role. People who currently work at that company are left out.
+    """
+    j = db.conn.execute("SELECT j.*, co.name AS company_name FROM jobs j JOIN companies co ON co.id = j.company_id "
+                        "WHERE j.id = ?", (job_id,)).fetchone()
+    if not j:
+        return []
+    pool = _pool(db)
+    key = (db.path, job_id, pool["version"], limit)
+    if key in _MATCH_CACHE:
+        return _MATCH_CACHE[key]
+    words = _role_words(j["title"])
+    if not words:
+        return []
+    pats = [re.compile(r"\b" + lens._word_rx(w), re.I) for w in words]
+    need = len(pats) if len(pats) < 3 else len(pats) - 1
+    company = (j["company_name"] or "").lower()
+    role_level = level_of(j["title"])
+    scored = []
+    for c in pool["rows"]:
+        hits = sum(1 for p in pats if p.search(c["title"]))
+        if hits < need:
+            continue
+        if abs(level_of(c["title"]) - role_level) > 1:
+            continue  # a Director for an individual-contributor role (or the reverse) isn't a fit
+        if company and c["company"] and company.split()[0] in c["company"].lower():
+            continue  # works there now
+        place = " ".join(x for x in [c["city"], c["state"]] if x)
+        texas = re.search(r"^(TX|Texas)$", (c["state"] or "").strip(), re.I) or re.search(r"\b(TX|Texas)\b", c["city"] or "")
+        if _DFW.search(c["city"] or "") and (texas or not (c["state"] or "").strip()):  # not Arlington, VA
+            local, where = 3, "in DFW"
+        elif re.search(r"\b(TX|Texas)\b", place, re.I):
+            local, where = 2, "in Texas"
+        elif not place:
+            local, where = 1, "location unknown"
+        else:
+            local, where = 0, "out of state"
+        scored.append(((local, c["has_resume"], hits, bool(c["email"] or c["phone"])), c, where))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    # Freshness: how recent is the résumé? An old résumé means the title and city may be out of date.
+    top = scored[:max(limit * 10, 30)]
+    years = pool["years"]
+    need_year = [c["id"] for _, c, _ in top if c["id"] not in years]
+    if need_year:
+        for cid, text in db.conn.execute(
+                f"SELECT id, resume_text FROM candidates WHERE id IN ({','.join('?' * len(need_year))})", need_year):
+            years[cid] = resume_year(text or "")
+    this_year = date.today().year
+    ranked = []
+    for s, c, where in top:
+        yr = years.get(c["id"])
+        fresh = 2 if yr and yr >= this_year - STALE_YEARS else (1 if not yr else 0)
+        ranked.append(((s[0], fresh, s[2], s[3]), c, where, yr))
+    ranked.sort(key=lambda x: x[0], reverse=True)
+    out = []
+    for s, c, where, yr in ranked[:limit]:
+        bits = [c["title"]]
+        if c["city"] or c["state"]:
+            bits.append(", ".join(x for x in [c["city"], c["state"]] if x))
+        bits.append(where if where != "location unknown" else "location not on file")
+        stale = s[1] < 2
+        if yr and not stale:
+            bits.append(f"résumé current ({yr})")
+        elif yr:
+            bits.append(f"résumé dated {yr}: verify before pitching")
+        else:
+            bits.append("no résumé on file: verify before pitching")
+        out.append({"c": dict(c), "why": " · ".join(bits), "local": s[0] >= 2, "where": where,
+                    "stale": stale, "resume_year": yr})
+    if len(_MATCH_CACHE) > 2000:
+        _MATCH_CACHE.clear()
+    _MATCH_CACHE[key] = out
+    return out
+
+
+def candidate_counts_for_job(db: DB, job_id: int) -> int:
+    """How many candidates match a role at all (for 'you have N people for this')."""
+    j = db.conn.execute("SELECT title FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    return len(candidates_for_job(db, job_id, limit=50)) if j else 0
 
 
 def pitch(db: DB, candidate_id: int, job_id: int, template_id: int | None = None) -> dict:
@@ -313,7 +495,8 @@ def pitch(db: DB, candidate_id: int, job_id: int, template_id: int | None = None
     tpl = db.template(template_id) if template_id else next(
         (t for t in db.templates("email") if t["name"] == PITCH_TEMPLATE[0]), None)
     vals = messaging.person_fields(db, hm["id"] if hm else None, j["company_id"])
-    vals["role"] = j["title"]
+    from .today import clean_role
+    vals["role"] = clean_role(j["title"])  # "Senior Data Engineer", not "…(Contract) (On-site)"
     vals.update(summary(c))
     body, missing = messaging.render(tpl["body"], vals)
     subject, _ = messaging.render(tpl["subject"] or "", vals)
@@ -330,7 +513,18 @@ PITCH_TEMPLATE = (
 )
 
 
+_COUNTS: dict = {}
+
+
 def candidate_counts(db: DB) -> dict:
+    """Totals for the Candidates page, recounted only when the candidate list changes."""
+    version = _pool(db)["version"]
+    if _COUNTS.get(db.path, (None,))[0] != version:
+        _COUNTS[db.path] = (version, _candidate_counts(db))
+    return _COUNTS[db.path][1]
+
+
+def _candidate_counts(db: DB) -> dict:
     one = lambda q: db.conn.execute(q).fetchone()[0]  # noqa: E731
     return {"total": one("SELECT COUNT(*) FROM candidates"),
             "with_resume": one("SELECT COUNT(*) FROM candidates WHERE resume_text IS NOT NULL"),
