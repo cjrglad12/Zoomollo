@@ -76,6 +76,45 @@ def line_note(number: str | None) -> str:
     return "toll-free" if _area(n) in _TOLL_FREE else "not a DFW number"
 
 
+def dialable(number: str | None) -> bool:
+    """Worth dialing. Toll-free numbers (800, 888...) go to customer service or a phone
+    tree, so they count as no number at all."""
+    n = re.sub(r"[^\d+]", "", number or "")
+    if not n:
+        return False
+    if not n.startswith("+"):
+        n = "+1" + n[-10:]
+    return _area(n) not in _TOLL_FREE
+
+
+def open_roles(db: DB, company_id: int, fit_roles: list[str], today: date | None = None) -> list[dict]:
+    """The company's open roles for a card: the ones on your desk first, then the rest.
+    The same title in several places is listed once ('x3')."""
+    today = today or date.today()
+    fit = set(fit_roles)
+    rows = db.conn.execute("SELECT title, url, location, posted_at, first_seen FROM jobs "
+                           "WHERE company_id = ? AND closed_at IS NULL AND title IS NOT NULL AND title != '' "
+                           "ORDER BY COALESCE(posted_at, first_seen) DESC", (company_id,)).fetchall()
+    out: dict[str, dict] = {}
+    for r in rows:
+        name = clean_role(r["title"])
+        key = name.lower()
+        if key in out:
+            out[key]["n"] += 1
+            if r["title"] in fit:
+                out[key]["fit"] = True
+            continue
+        age = None
+        try:
+            days = (today - date.fromisoformat((r["posted_at"] or r["first_seen"] or "")[:10])).days
+            age = "new today" if days <= 0 else f"{days}d ago" if days < 60 else f"{days // 30}mo ago"
+        except ValueError:
+            pass
+        out[key] = {"title": name, "url": r["url"], "location": r["location"], "age": age,
+                    "fit": r["title"] in fit, "n": 1}
+    return sorted(out.values(), key=lambda j: not j["fit"])
+
+
 def _line_rank(row) -> tuple:
     """Lower is better: a DFW office number from a contact page first; another city's
     office, or a number that only appeared in a news post or advisory, last."""
@@ -95,11 +134,17 @@ def _line_rank(row) -> tuple:
 
 
 def _main_line(db: DB, company_id: int, listed: str | None) -> str | None:
-    if listed:
+    if listed and dialable(listed) and not db.is_suppressed(listed):
         return listed
     rows = db.conn.execute("SELECT id, value, kind, source_url FROM contacts WHERE company_id = ? AND type = 'phone'",
                            (company_id,)).fetchall()
-    rows = [r for r in rows if r["value"].startswith("+1")]  # an overseas office is no use to a DFW desk
+    # An overseas office is no use to a DFW desk; a toll-free line or a number read from a
+    # help / support page goes to customer service.
+    # A number that only appeared in a news post or advisory is rarely theirs.
+    from .exclusions import is_support_page
+    from .pipeline import article_page
+    rows = [r for r in rows if r["value"].startswith("+1") and dialable(r["value"])
+            and not is_support_page(r["source_url"]) and not article_page(r["source_url"] or "")]
     return min(rows, key=_line_rank)["value"] if rows else None
 
 
@@ -131,6 +176,8 @@ def _contact_score(p) -> tuple:
 
 def pick_person(people: list, fit_roles: list[str]):
     """(person, why this person) — the best person to call about these roles."""
+    from .exclusions import is_support_title
+    people = [p for p in people if not is_support_title(p["title"])]  # CSRs and support reps never hire
     if not people:
         return None, ""
     # Not someone whose title names a different specialty: the Audit partner for tax openings.
@@ -308,6 +355,8 @@ def _call_list(db: DB, limit: int = 25, today: date | None = None, with_pitches:
         co = companies[cid]
         people = db.conn.execute("SELECT * FROM people WHERE company_id = ?", (cid,)).fetchall()
         person, why_person = pick_person(people, s.fit_roles)
+        if person and person["phone"] and not dialable(person["phone"]):
+            person = dict(person) | {"phone": None}
         from . import leads as _leads
         lead = None if person else _leads.best(db, cid, s.fit_roles, ask_for(s.fit_roles))
         main = _main_line(db, cid, co["phone"])
@@ -335,6 +384,7 @@ def _call_list(db: DB, limit: int = 25, today: date | None = None, with_pitches:
             "opener": opener(s, person["name"] if person else (lead["first_name"] if lead else None), co["city"], my_name,
                              pitches[0] if pitches else None, db.get_setting("my_company") or ""),
             "pitches": pitches, "ask_for": ask_for(s.fit_roles),
+            "roles": open_roles(db, cid, s.fit_roles, today),
             "stage": STAGE_NAMES.get(stage["stage"]) if stage else None,
             "next_step": stage["next_step"] if stage else None, "due": bool(due),
             "last": lt,

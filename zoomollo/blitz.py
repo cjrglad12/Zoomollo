@@ -217,7 +217,7 @@ def build(db: DB, f: dict, today: date | None = None) -> list[dict]:
 
 
 def _number(person, main_line):
-    if person and person["phone"]:
+    if person and person["phone"] and td.dialable(person["phone"]):
         return person["phone"], "direct"
     if main_line:
         return main_line, "main line"
@@ -351,6 +351,7 @@ def card(db: DB, item: dict, settings: dict) -> dict:
         "phone": phone, "kind": kind, "ext": extension(phone or ""), "main_line": main,
         "gv": gv_url(phone, settings["gv_account"]) if phone else None,
         "opener": say, "why_now": why, "ask_for": ask, "pitches": pitches,
+        "roles": td.open_roles(db, cid, fit),
         "lead": lead, "lead_label": _leads.label(lead),
         "stage": STAGE_NAMES.get(stage["stage"]) if stage else None,
         "next_step": stage["next_step"] if stage else None, "last": last,

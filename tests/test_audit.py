@@ -54,8 +54,10 @@ def test_the_number_shown_is_the_local_office_not_a_far_one_or_junk(tmp_path):
     db.add_contact(dun, "phone", "+15125550101", "company", source_url="https://example-eng.com/locations/austin/")
     db.add_contact(dun, "phone", "+18175550102", "company", source_url="https://example-eng.com/locations/fort-worth/")
     db.commit()
-    assert today._main_line(db, par, None) == "+18443252729"    # national line, not the Toronto office
-    assert today._main_line(db, cs, None) == "+18776842077"     # not a number out of a threat advisory
+    # Toll-free lines go to customer service: the Toronto office (flagged "not a DFW number") beats it.
+    assert today._main_line(db, par, None) == "+16474846600"
+    assert today._main_line(db, cs, None) is None               # toll-free, or out of a threat advisory: nothing to dial
+    assert not today.dialable("+18443252729") and today.dialable("+18175550102")
     assert today._main_line(db, dun, None) == "+18175550102"    # the Fort Worth office
     assert today.line_note("+18443252729") == "toll-free" and today.line_note("+16474846600") == "not a DFW number"
     assert today.line_note("+18175550102") == "" and today.line_note("") == ""

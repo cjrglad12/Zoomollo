@@ -156,6 +156,7 @@ class PageResult:
     link_text: dict[str, str] = field(default_factory=dict)  # url -> anchor text
     site_name: str | None = None     # the name the site gives itself (og:site_name / schema.org)
     headcount: int | None = None     # how many people the company says it has
+    support_phones: set[str] = field(default_factory=set)  # labelled customer service / tech support
 
 
 _NUM = r"(\d{1,3}(?:,\d{3})+|\d{2,6})\s*\+?"
@@ -648,6 +649,10 @@ def extract_page(html: str, url: str, region: str = "US") -> PageResult:
             phone = normalize_phone(href[4:], region)
             if phone:
                 res.phones.add(phone)
+                label = a.get_text(" ", strip=True)
+                around = a.parent.get_text(" ", strip=True) if a.parent else ""
+                if _support_context(label) or (len(around) <= 160 and _support_context(around.split(label)[0] if label else around)):
+                    res.support_phones.add(phone)
         elif low.startswith(("http://", "https://", "/")):
             absolute = urljoin(url, href).split("#")[0]
             if social_kind(absolute):
@@ -675,12 +680,38 @@ def extract_page(html: str, url: str, region: str = "US") -> PageResult:
     res.headcount = find_headcount(text, html)
     res.emails |= find_emails(text)
     res.phones |= find_phones(text, region)
+    res.support_phones |= find_support_phones(text, region)
+    from .exclusions import is_support_page
+    if is_support_page(url):
+        res.support_phones |= res.phones
     for p in res.people:
         if p.email:
             res.emails.add(p.email)
         if p.phone:
             res.phones.add(p.phone)
     return res
+
+
+def _support_context(before: str) -> bool:
+    """The words just before a number say it's customer service / tech support (and no
+    office label comes after that)."""
+    from .exclusions import OFFICE_LABEL, SUPPORT_LABEL
+    hits = list(SUPPORT_LABEL.finditer(before))
+    if not hits:
+        return False
+    return not OFFICE_LABEL.search(before[hits[-1].end():])
+
+
+def find_support_phones(text: str, region: str = "US") -> set[str]:
+    """Numbers labelled customer service, tech support, billing and the like. Only the words
+    since the previous number count, so 'Support: 800-... Main office: 214-...' keeps the 214."""
+    out, prev_end = set(), 0
+    for m in phonenumbers.PhoneNumberMatcher(text, region, leniency=phonenumbers.Leniency.VALID):
+        before = text[max(prev_end, m.start - 80):m.start]
+        if _support_context(before):
+            out.add(phonenumbers.format_number(m.number, phonenumbers.PhoneNumberFormat.E164))
+        prev_end = m.end
+    return out
 
 
 def extract_text(text: str, region: str = "US") -> tuple[set[str], set[str]]:
